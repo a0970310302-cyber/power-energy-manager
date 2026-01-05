@@ -1,3 +1,12 @@
+import sys
+import traceback
+
+# 將這段放在 app.py 最上面，確保任何錯誤都會被印出來
+def exception_handler(type, value, tb):
+    print("❌ 發生致命錯誤！(Printed from Console)", file=sys.stderr)
+    traceback.print_exception(type, value, tb)
+sys.excepthook = exception_handler
+
 import streamlit as st
 import time
 import pandas as pd
