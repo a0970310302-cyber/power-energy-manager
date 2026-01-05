@@ -6,6 +6,7 @@ import requests
 import os
 import re
 import warnings
+import json
 
 # ==========================================
 # 🚑 [設定] 抑制警告 & 相容性設定
@@ -350,3 +351,79 @@ def load_resources_and_predict():
     except Exception as e:
         print(f"❌ [Model Service Error]: {e}")
         return None, None
+    
+
+def auto_archive_live_data(live_df, target_basket="2025-q4"):
+    """
+    自動將最新的 Live Data 歸檔到歷史 Pantry Basket
+    """
+    if live_df is None or live_df.empty:
+        return
+
+    # 1. 準備目標 URL (歷史資料區)
+    history_url = f"https://getpantry.cloud/apiv1/pantry/{HISTORY_PANTRY_ID}/basket/{target_basket}"
+    
+    try:
+        # 2. 取出 Live Data 最新的一筆資料 (轉成 dict 格式)
+        # 假設我們只存最後一筆，避免重複存取
+        latest_record = live_df.iloc[-1].copy()
+        latest_time_str = latest_record.name.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 轉換成 Pantry 習慣的 JSON 格式 (這裡要配合你們原本的儲存格式，假設是散裝 dict)
+        new_data_payload = {
+            "date": latest_record.name.strftime("%Y-%m-%d"),
+            "time": latest_record.name.strftime("%H:%M"),
+            "power_kW": float(latest_record['power_kW']),
+            "temperature": float(latest_record['temperature']),
+            "humidity": float(latest_record['humidity'])
+        }
+
+        print(f"💾 [Archive] 嘗試歸檔資料: {latest_time_str}")
+
+        # 3. 下載目前的歷史資料 (為了比對避免重複)
+        headers = {'Content-Type': 'application/json'}
+        r = requests.get(history_url, timeout=10)
+        
+        current_history = []
+        if r.status_code == 200:
+            data = r.json()
+            # 處理 Pantry 可能回傳的結構 (有 data key 或是直接 list)
+            if "data" in data:
+                current_history = data["data"]
+            elif isinstance(data, list):
+                current_history = data
+            elif isinstance(data, dict):
+                # 如果原本是單層 dict，轉成 list
+                current_history = [data]
+        
+        # 4. 重複檢查 (防呆)
+        # 檢查最後一筆的時間是否跟我們要存的一樣
+        if current_history:
+            last_history_item = current_history[-1]
+            # 這裡需要簡單的解析來比對時間，避免重複 append
+            last_date = last_history_item.get('date', '')
+            last_time = last_history_item.get('time', '')
+            if last_date == new_data_payload['date'] and last_time == new_data_payload['time']:
+                print("   ⚠️ [Archive] 資料已存在，跳過存檔。")
+                return
+
+        # 5. 附加新資料並上傳
+        current_history.append(new_data_payload)
+        
+        # 如果歷史資料太多 (例如超過 5000 筆)，可能會讓 Pantry 變慢
+        # 建議可以設個上限，例如只保留最近 14 天 (336小時)
+        # current_history = current_history[-336:] 
+
+        # 6. POST 回去 (更新 Basket)
+        # 注意：Pantry 的 POST 會直接取代原本內容
+        payload_to_send = {"data": current_history} # 包一層 data 比較安全，符合你原本的結構
+        
+        post_r = requests.post(history_url, json=payload_to_send, headers=headers, timeout=10)
+        
+        if post_r.status_code == 200:
+            print(f"   ✅ [Archive] 歸檔成功！目前歷史筆數: {len(current_history)}")
+        else:
+            print(f"   ❌ [Archive] 上傳失敗: {post_r.text}")
+
+    except Exception as e:
+        print(f"   ❌ [Archive Error] 歸檔過程發生錯誤: {e}")
