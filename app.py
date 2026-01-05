@@ -1,114 +1,153 @@
+# app.py
 import streamlit as st
 import time
+import pandas as pd
 from streamlit_lottie import st_lottie
+import concurrent.futures # 【關鍵新增】用於背景執行的函式庫
 
-# 匯入我們拆分出去的檔案
-from app_utils import load_lottiefile, load_model, load_data
+# 匯入原本的 UI 模組
+from app_utils import load_lottiefile
 from page_home import show_home_page
 from page_dashboard import show_dashboard_page
 from page_analysis import show_analysis_page
-from page_tutorial import show_tutorial_page # 匯入教學頁面
+from page_tutorial import show_tutorial_page
 
-# --- 0. 頁面設定 (必須是第一個 st 指令) ---
+# 匯入後端服務
+from model_service import load_resources_and_predict
+
+# --- 0. 頁面設定 ---
 st.set_page_config(layout="wide", page_title="智慧電能管家")
 
-# --- 1. 初始化所有 Session State 旗標 ---
+# --- 1. 初始化 Session State ---
 if "app_ready" not in st.session_state:
     st.session_state.app_ready = False
 if "tutorial_complete" not in st.session_state:
+    # 如果是第一次來，預設要看導覽
     st.session_state.tutorial_complete = False
+if "page" not in st.session_state:
+    st.session_state.page = "home"
 
-# --- 2. 應用程式三階段邏輯 ---
+# 用於儲存 AI 計算結果
+if "prediction_result" not in st.session_state:
+    st.session_state.prediction_result = None
+if "current_data" not in st.session_state:
+    st.session_state.current_data = None
 
-# --- 階段一：開場動畫 (Loading Screen) ---
-if not st.session_state.app_ready:
-    
+# 【核心修改 1】初始化背景執行緒
+# 我們把「未來的結果」存成一個 future 物件，而不直接等待它完成
+if "load_future" not in st.session_state:
+    # 建立一個執行緒池 (Thread Pool)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    # 把重工作提交給它，它會立刻回傳一個 future (代表未來的結果)，不會卡住主程式
+    st.session_state.load_future = executor.submit(load_resources_and_predict)
+    st.session_state.executor = executor # 保留參照以免被回收
 
+# --- 輔助函式：切換頁面 ---
+def go_to_page(page_name):
+    st.session_state.page = page_name
+    st.rerun()
 
-    lottie_filepath = "lottiefiles/loading_animation.json"
-    lottie_json = load_lottiefile(lottie_filepath)
-    
-    # 使用空白推擠內容到中間
-    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-    
-    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if lottie_json:
-            st_lottie(lottie_json, speed=1, width=400, height=400, key="loading_lottie")
-        else:
-            st.warning("動畫載入失敗...")
+# --- 輔助函式：確保資料已載入 ---
+def ensure_data_loaded():
+    """
+    這是一個「檢查站」。
+    當使用者要進入主功能時，我們呼叫此函式。
+    如果背景還沒跑完，這裡會跳出轉圈圈等待。
+    如果背景早就跑完了，這裡會瞬間通過。
+    """
+    if st.session_state.app_ready:
+        return True # 資料已經在手上了
+
+    if "load_future" in st.session_state:
+        future = st.session_state.load_future
         
-        st.subheader("💡 智慧電能管家 啟動中...")
-        st.text("正在為您載入 AI 模型與歷史數據...")
-
-    # 【⭐ 修改點 3：強制等待 3 秒 ⭐】
-    # 這是解決「動畫一閃而過」的關鍵！
-    # 即使模型是從快取秒開的，我們也讓動畫至少播 3 秒
-    time.sleep(3)
-
-    # 觸發快取函式
-    model = load_model()
-    df_history = load_data()
-
-    # 載入成功，切換狀態
-    if model is not None and not df_history.empty:
-        st.session_state.app_ready = True
-        st.rerun()
-    else:
-        st.error("啟動失敗：無法載入模型或數據。請檢查您的檔案。")
-        st.stop()
-
-# --- 階段二：教學導覽 ---
-elif not st.session_state.tutorial_complete:
-    show_tutorial_page()
-
-# --- 階段三：主應用程式 ---
-else:
-    # 1. 側邊欄
-    with st.sidebar:
-        # 嘗試載入不同的 Logo 檔名 (容錯處理)
-        lottie_logo = load_lottiefile("lottiefiles/intelligent_tour_guide_robot.json")
-        if not lottie_logo:
-             lottie_logo = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot_green.json")
-             
-        if lottie_logo:
-            st_lottie(
-                lottie_logo,
-                speed=1,
-                loop=True,
-                quality="high",
-                height=150,
-                key="logo_animation"
-            )
-        else:
-            st.header("AI Power Forecast")
+        # 顯示載入畫面 (只有在背景還沒跑完時，使用者才會看到這個)
+        if not future.done():
+            lottie_json = load_lottiefile("lottiefiles/loading_animation.json")
+            placeholder = st.empty()
+            with placeholder.container():
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    if lottie_json:
+                        st_lottie(lottie_json, speed=1, width=300, height=300, key="loading_wait")
+                    else:
+                        st.spinner("載入中...")
+                    st.info("⚡ AI 模型正在做最後衝刺...請稍候")
             
-        st.header("功能選單")
-        st.divider()
+            # 這裡會正式「阻塞 (Block)」，直到背景工作完成
+            try:
+                pred_df, curr_df = future.result()
+            except Exception as e:
+                st.error(f"載入失敗: {e}")
+                st.stop()
+            
+            placeholder.empty() # 清除載入動畫
+        else:
+            # 如果早就做完了，直接拿結果
+            pred_df, curr_df = future.result()
+            
+        # 存入 Session State
+        if pred_df is not None:
+            st.session_state.prediction_result = pred_df
+            st.session_state.current_data = curr_df
+            st.session_state.app_ready = True
+            return True
+        else:
+            st.error("啟動失敗：模型服務回傳 None。")
+            st.stop()
+    return False
 
-        # 初始化預設頁面
-        if 'page' not in st.session_state:
-            st.session_state.page = "🏠 主頁"
+# ==========================================
+# 🚀 程式主流程 (修改後的邏輯)
+# ==========================================
+
+# 1. 如果還沒看完導覽 -> 直接顯示導覽 (不等待資料！)
+if not st.session_state.tutorial_complete:
+    # 在導覽頁面，Python 會繼續往下跑，而背景執行緒也在同時跑
+    show_tutorial_page()
+    
+    # 注意：如果使用者在導覽頁按了「開始體驗」，tutorial_complete 會變成 True
+    # 然後 st.rerun() 會觸發，進入下面的 else區塊
+
+# 2. 如果導覽看完了 (或略過) -> 進入主程式
+else:
+    # 在進入主程式前，必須過「檢查站」
+    # 這時候如果使用者導覽看了很久，資料早就好了，這裡會是 0 秒通過
+    if ensure_data_loaded():
         
-        current_page = st.session_state.page
+        # --- 側邊欄導航 ---
+        with st.sidebar:
+            lottie_logo = load_lottiefile("lottiefiles/intelligent_tour_guide_robot.json")
+            if not lottie_logo: lottie_logo = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot_green.json")     
+            if lottie_logo:
+                st_lottie(lottie_logo, speed=1, loop=True, quality="high", height=150, key="logo_animation")
+            
+            st.header("功能選單")
+            st.divider()
 
-        if st.button("🏠 主頁", key="nav_home", use_container_width=True, type="secondary" if current_page != "🏠 主頁" else "primary"):
-            st.session_state.page = "🏠 主頁"
-            st.rerun()
-        
-        if st.button("📈 用電儀表板", key="nav_dashboard", use_container_width=True, type="secondary" if current_page != "📈 用電儀表板" else "primary"):
-            st.session_state.page = "📈 用電儀表板"
-            st.rerun()
+            current_page = st.session_state.page
 
-        if st.button("🔬 AI 決策分析室", key="nav_analysis", use_container_width=True, type="secondary" if current_page != "🔬 AI 決策分析室" else "primary"):
-            st.session_state.page = "🔬 AI 決策分析室"
-            st.rerun()
+            if st.button("🏠 主頁", use_container_width=True, type="primary" if current_page == "home" else "secondary"):
+                go_to_page("home")
+            
+            if st.button("📈 用電儀表板", use_container_width=True, type="primary" if current_page == "dashboard" else "secondary"):
+                go_to_page("dashboard")
 
-    # 2. 頁面路由
-    if current_page == "📈 用電儀表板":
-        show_dashboard_page()
-    elif current_page == "🔬 AI 決策分析室":
-        show_analysis_page()
-    else: # 預設或 "🏠 主頁"
-        show_home_page()
+            if st.button("🔬 AI 決策分析室", use_container_width=True, type="primary" if current_page == "analysis" else "secondary"):
+                go_to_page("analysis")
+                
+            st.divider()
+            if st.button("🔄 重新抓取數據"):
+                # 重置狀態，讓它重新跑一次 loading
+                st.session_state.app_ready = False
+                if "load_future" in st.session_state:
+                    del st.session_state.load_future
+                st.rerun()
+
+        # 頁面路由
+        if current_page == "dashboard":
+            show_dashboard_page()
+        elif current_page == "analysis":
+            show_analysis_page()
+        else:
+            show_home_page()
