@@ -16,30 +16,24 @@ from page_tutorial import show_tutorial_page
 from model_service import load_resources_and_predict
 
 # 設定頁面資訊
-st.set_page_config(layout="wide", page_title="智慧電能管家")
+st.set_page_config(layout="wide", page_title="智慧電能管家", page_icon="⚡")
 
 # ==========================================
-# 🛠️ [除錯區塊] 檢查雲端環境檔案
+# 🔍 系統健康檢查 (保留但不顯示給使用者，除非出錯)
 # ==========================================
-def debug_check_files():
-    # 只有在還沒準備好時才檢查，避免畫面一直被洗版
+def check_system_integrity():
+    # 只有在初始化階段檢查
     if not st.session_state.get("app_ready", False):
-        st.warning("🛠️ 進入除錯模式：檢查檔案系統...")
         try:
             files = os.listdir('.')
-            # st.write(f"當前工作目錄: {os.getcwd()}") # 註解掉以保持畫面乾淨，需要時再打開
-            # st.write("目錄下檔案列表:", files)
-            
             required = ["final_training_data_with_humidity.csv", "lgbm_model.pkl", "lstm_model.keras"]
             missing = [f for f in required if f not in files]
             
             if missing:
-                st.error(f"❌ 致命錯誤：雲端環境找不到以下檔案: {missing}")
+                st.error(f"⚠️ 系統錯誤：偵測到關鍵檔案遺失: {missing}")
                 st.stop()
-            else:
-                st.success("✅ 關鍵檔案檢查通過")
         except Exception as e:
-            st.error(f"檢查檔案時發生錯誤: {e}")
+            st.error(f"系統檢查失敗: {e}")
 
 # ==========================================
 # Session State 初始化
@@ -56,64 +50,70 @@ if "current_data" not in st.session_state:
     st.session_state.current_data = None
 
 # ==========================================
-# 同步載入函式
+# 資料載入核心 (同步模式 - 穩定優先)
 # ==========================================
-def ensure_data_loaded():
+def initialize_system():
     """
-    修改版：不做背景執行，直接在前景執行並印出每一步。
-    回傳 True 代表已載入完成，False 代表正在載入中。
+    執行系統初始化與數據載入
     """
     if st.session_state.app_ready:
         return True
 
-    # 1. 先執行檔案檢查
-    debug_check_files()
+    # 1. 背景檢查
+    check_system_integrity()
 
-    st.info("⚡ 正在載入模型與數據 (同步除錯模式)...這可能需要 10-30 秒")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    try:
-        status_text.text("正在呼叫 load_resources_and_predict()...")
+    # 2. 顯示載入畫面
+    # 這裡可以用 st.empty() 做一個佔位符，讓畫面乾淨點
+    loading_placeholder = st.empty()
+    
+    with loading_placeholder.container():
+        st.info("⚡ 系統啟動中，正在連接 AI 模型與雲端數據庫...")
+        progress_bar = st.progress(0)
         
-        # 計時開始
-        start_time = time.time()
-        
-        # 執行核心載入 (這一步最花時間)
-        pred_df, curr_df = load_resources_and_predict()
-        
-        end_time = time.time()
-        status_text.text(f"函式執行完成，耗時 {end_time - start_time:.2f} 秒")
-        
-        if pred_df is None:
-            st.error("❌ 載入失敗：model_service 回傳了 None。請檢查下方 Logs 或 model_service.py。")
-            st.stop()
+        try:
+            # 模擬進度 (讓使用者覺得有在動)
+            progress_bar.progress(10)
+            time.sleep(0.1)
             
-        st.session_state.prediction_result = pred_df
-        st.session_state.current_data = curr_df
-        st.session_state.app_ready = True
-        
-        progress_bar.progress(100)
-        time.sleep(0.5) 
-        st.rerun() # 重新整理以進入主頁面
-        
-    except Exception as e:
-        st.error("❌ 發生嚴重錯誤！")
-        st.code(traceback.format_exc()) # 印出完整的錯誤追蹤
-        st.stop()
+            # --- 核心載入 ---
+            pred_df, curr_df = load_resources_and_predict()
+            
+            progress_bar.progress(80)
+            
+            if pred_df is None:
+                st.error("❌ 數據載入失敗，請稍後再試或聯繫管理員。")
+                st.stop()
+                
+            # 存入 Session
+            st.session_state.prediction_result = pred_df
+            st.session_state.current_data = curr_df
+            st.session_state.app_ready = True
+            
+            progress_bar.progress(100)
+            time.sleep(0.5) 
+            
+            # 清除載入畫面
+            loading_placeholder.empty()
+            st.rerun() 
+            
+        except Exception as e:
+            st.error("❌ 系統發生預期外的錯誤")
+            # 在正式版中，可以使用 expander 把詳細錯誤藏起來，使用者才不會被嚇到
+            with st.expander("查看錯誤詳情 (給開發人員)"):
+                st.code(traceback.format_exc())
+            st.stop()
 
     return False
 
 # ==========================================
-# 🚀 [這就是缺少的] 主程式執行流程
+# 🚀 主程式進入點
 # ==========================================
 def main():
-    # 1. 側邊欄導航 (Sidebar)
+    # 1. 側邊欄導航
     with st.sidebar:
-        st.title("功能選單")
+        st.title("⚡ 功能選單")
         
-        # 使用按鈕切換頁面
-        if st.button("🏠 主頁", use_container_width=True):
+        if st.button("🏠 首頁總覽", use_container_width=True):
             st.session_state.page = "home"
             st.rerun()
             
@@ -121,22 +121,24 @@ def main():
             st.session_state.page = "dashboard"
             st.rerun()
             
-        if st.button("🔬 AI 決策分析室", use_container_width=True):
+        if st.button("🧠 AI 決策分析", use_container_width=True):
             st.session_state.page = "analysis"
             st.rerun()
 
         st.markdown("---")
-        if st.button("🔄 重新抓取數據"):
+        # 重新整理按鈕
+        if st.button("🔄 更新即時數據"):
             st.session_state.app_ready = False
             st.rerun()
+            
+        st.markdown("---")
+        st.caption(f"Ver 1.0.0 | System Status: {'🟢 Online' if st.session_state.app_ready else '🟡 Loading'}")
 
-    # 2. 確保數據載入 (守門員)
-    # 如果還沒載入好，程式會停在 ensure_data_loaded 裡面，不會往下跑
-    if not ensure_data_loaded():
+    # 2. 系統初始化守門員
+    if not initialize_system():
         st.stop() 
 
-    # 3. 頁面路由 (Router)
-    # 只有當數據載入完成後，才會執行到這裡
+    # 3. 頁面路由
     if st.session_state.page == "home":
         show_home_page()
     elif st.session_state.page == "dashboard":
@@ -148,6 +150,6 @@ def main():
     else:
         show_home_page()
 
-# 執行主程式
+# 程式執行入口
 if __name__ == "__main__":
     main()
