@@ -23,7 +23,6 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ==========================================
 DESIGN_PEAK_LOAD_KW = 20.0 
 
-# 使用新的混合模型架構
 MODEL_FILES = {
     "config": "hybrid_residual.pkl",
     "lgbm": "lgbm_residual.pkl",
@@ -34,7 +33,7 @@ MODEL_FILES = {
 LOOKBACK_HOURS = 168
 
 # ==========================================
-# 🛠️ 進階特徵工程
+# 🛠️ 特徵工程
 # ==========================================
 def get_taiwan_holidays():
     holidays = [
@@ -56,9 +55,6 @@ def get_taiwan_holidays():
     return holidays
 
 def create_hybrid_features(df):
-    """
-    產生 Hybrid Model 所需的所有特徵 (包含 Seq 和 Direct)
-    """
     df = df.copy()
     
     # 時間特徵
@@ -89,11 +85,9 @@ def create_hybrid_features(df):
     df['rolling_max_24h'] = df['power'].shift(1).rolling(window=24, min_periods=1).max()
     df['rolling_min_24h'] = df['power'].shift(1).rolling(window=24, min_periods=1).min()
     df['rolling_mean_7d'] = df['power'].shift(1).rolling(window=168, min_periods=1).mean()
-    
-    # [LSTM 專用特徵]
     df['rolling_mean_3h'] = df['power'].shift(1).rolling(window=3, min_periods=1).mean() 
     
-    # Lag 特徵 (兼容命名)
+    # Lag 特徵
     for lag in [24, 48, 168]:
         df[f'lag_{lag}'] = df['power'].shift(lag)
         df[f'lag_{lag}h'] = df['power'].shift(lag) 
@@ -110,14 +104,12 @@ def load_resources_and_predict(full_data_df=None):
     try:
         # 1. 載入資源
         print("📥 [Model Service] 正在載入混合模型資源...")
-        config = joblib.load(MODEL_FILES['config']) # hybrid_residual.pkl
+        config = joblib.load(MODEL_FILES['config'])
         
         resources['lgbm'] = joblib.load(MODEL_FILES['lgbm'])
         resources['lstm'] = keras.models.load_model(MODEL_FILES['lstm'])
-        
-        # 從 config 中取得 Scaler
         resources['scaler_seq'] = config['scaler_seq']
-        resources['scaler_direct'] = config.get('scaler_direct', None) # 獲取第二個輸入的 Scaler
+        resources['scaler_direct'] = config.get('scaler_direct', None)
         
         # 2. 準備數據
         combined_df = None
@@ -136,7 +128,6 @@ def load_resources_and_predict(full_data_df=None):
             if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
             combined_df = hist_df
 
-        # 還原為小數值
         df_model = combined_df.copy()
         if is_scaled_input:
             df_model['power'] = df_model['power_kW'] / DESIGN_PEAK_LOAD_KW
@@ -164,49 +155,48 @@ def load_resources_and_predict(full_data_df=None):
         full_feat = create_hybrid_features(full_context)
         
         # ======================================
-        # Step A: LSTM 預測 (雙輸入)
+        # Step A: LSTM 預測
         # ======================================
         current_idx = -25
-        
-        # Input 1: Sequence (歷史序列)
         lstm_seq_cols = config['lstm_seq_cols']
         seq_data = full_feat[lstm_seq_cols].iloc[current_idx-LOOKBACK_HOURS+1 : current_idx+1].values
         X_seq = resources['scaler_seq'].transform(seq_data).reshape(1, LOOKBACK_HOURS, -1)
         
-        # Input 2: Direct (當下輔助特徵) - [關鍵修正點]
         lstm_dir_cols = config.get('lstm_direct_cols', [])
-        
-        # 確保 Direct 特徵存在
         for c in lstm_dir_cols:
             if c not in full_feat.columns: full_feat[c] = 0
             
-        # 取出下一時刻的輔助特徵
         dir_data = full_feat[lstm_dir_cols].iloc[current_idx+1 : current_idx+2].values
         
-        # Scale Direct Input
         if resources['scaler_direct']:
             X_dir = resources['scaler_direct'].transform(dir_data)
         else:
-            X_dir = dir_data # Fallback
+            X_dir = dir_data
             
-        # 呼叫雙輸入預測
-        # LSTM 預測值 (0.x)
         pred_lstm_val = resources['lstm'].predict([X_seq, X_dir], verbose=0).flatten()[0]
         
-        # 將 LSTM 預測結果填入特徵，供 LGBM 使用
         full_feat['lstm_pred'] = 0.0
         full_feat.iloc[-24:, full_feat.columns.get_loc('lstm_pred')] = pred_lstm_val
         
         # ======================================
-        # Step B: LightGBM 預測 (殘差修正)
+        # Step B: LightGBM 預測
         # ======================================
         lgbm_cols = config['lgbm_feature_cols']
+        
+        # [關鍵修正點] 檢查 lgbm_cols 是否包含 lstm_pred，若無則加入
+        # 因為 config 裡的列表可能只包含原始特徵，沒有包含動態生成的 lstm_pred
+        final_lgbm_cols = list(lgbm_cols)
+        if 'lstm_pred' not in final_lgbm_cols:
+            final_lgbm_cols.append('lstm_pred')
+            
         target_feat = full_feat.iloc[-24:].copy()
         
-        for c in lgbm_cols:
+        for c in final_lgbm_cols:
             if c not in target_feat.columns: target_feat[c] = 0
             
-        X_lgbm = target_feat[lgbm_cols]
+        # 使用修正後的完整特徵列表 (15個)
+        X_lgbm = target_feat[final_lgbm_cols]
+        
         pred_final = resources['lgbm'].predict(X_lgbm)
         pred_final = np.maximum(pred_final, 0)
         
