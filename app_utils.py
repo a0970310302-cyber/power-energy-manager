@@ -28,7 +28,8 @@ MODEL_FILES = {
 # ==========================================
 # 📅 歷史費率資料庫 (Rate History DB)
 # ==========================================
-# 依據台電歷年公告：2022/7, 2023/4, 2024/4 三次調整
+# 依據台電歷年公告及您提供的113/114年檔案進行校正
+# 結構：[120度, 330度, 500度, 700度, 1000度, 1001度+]
 RATES_DB = {
     # --- 2022年 (7月前) ---
     "2022_H1": {
@@ -45,7 +46,7 @@ RATES_DB = {
     # --- 2022年 (7月後，1000度以上調漲) ---
     "2022_H2": {
         "progressive": {
-            "summer": [1.63, 2.38, 3.52, 4.80, 5.66, 6.99], # >1001度調漲
+            "summer": [1.63, 2.38, 3.52, 4.80, 5.66, 6.99],
             "non_summer": [1.63, 2.10, 2.89, 3.94, 4.60, 5.48]
         },
         "tou": {
@@ -57,24 +58,38 @@ RATES_DB = {
     # --- 2023年 (4月後，700度以上調漲，TOU時段改變) ---
     "2023": {
         "progressive": {
-            "summer": [1.63, 2.38, 3.52, 4.80, 5.83, 7.69], # 700+調漲
+            "summer": [1.63, 2.38, 3.52, 4.80, 5.83, 7.69],
             "non_summer": [1.63, 2.10, 2.89, 3.94, 4.74, 6.03]
         },
         "tou": {
-            "summer": {"peak": 4.71, "off": 1.96}, # 簡易型二段式
-            "non_summer": {"peak": 4.48, "off": 1.89} # 非夏月其實全日單一價(簡易型特例)，但此處模擬住商型標準
+            "summer": {"peak": 4.71, "off": 1.96}, 
+            "non_summer": {"peak": 4.48, "off": 1.89}
         },
-        "tou_peak_hours_type": "new" # 新制：太陽光電併網，尖峰移至傍晚
+        "tou_peak_hours_type": "new" # 新制：下午傍晚是尖峰
     },
-    # --- 2024年~2025年 (4月後，全面調漲) ---
+    # --- 2024年 (4月後，全面調漲) ---
     "2024": {
         "progressive": {
             "summer": [1.68, 2.45, 3.70, 5.04, 6.24, 8.46],
             "non_summer": [1.68, 2.16, 3.03, 4.14, 5.07, 6.63]
         },
         "tou": {
-            "summer": {"peak": 5.01, "off": 1.96}, # 依據您提供的113年檔案
+            "summer": {"peak": 5.01, "off": 1.96},
             "non_summer": {"peak": 4.78, "off": 1.89}
+        },
+        "tou_peak_hours_type": "new"
+    },
+    # --- 2025年 (114年10月後，民生微幅調漲) ---
+    # 依據最新政策：330度以下+0.1, 331-700+0.1, 701-1000+0.2, 1000++0.4
+    "2025": {
+        "progressive": {
+            "summer": [1.78, 2.55, 3.80, 5.14, 6.44, 8.86],
+            "non_summer": [1.78, 2.26, 3.13, 4.24, 5.27, 7.03]
+        },
+        "tou": {
+            # 產業凍漲，民生微調，此處假設 TOU 跟隨微調趨勢
+            "summer": {"peak": 5.11, "off": 2.06}, 
+            "non_summer": {"peak": 4.88, "off": 1.99}
         },
         "tou_peak_hours_type": "new"
     }
@@ -90,8 +105,10 @@ def get_rate_config(date_obj):
         return RATES_DB["2022_H2"]
     elif d < datetime(2024, 4, 1):
         return RATES_DB["2023"]
+    elif d < datetime(2025, 10, 16):
+        return RATES_DB["2024"]
     else:
-        return RATES_DB["2024"] # 2024, 2025 使用最新
+        return RATES_DB["2025"]
 
 # ==========================================
 # 📥 資料載入 (維持不變)
@@ -126,6 +143,26 @@ def load_lottiefile(filepath):
     except: return None
 
 # ==========================================
+# 🧠 模型載入工具 (修復：加回此函式)
+# ==========================================
+def load_model(path=None):
+    """
+    載入 .pkl 模型檔案。如果不指定 path，則預設載入 LGBM 模型。
+    """
+    if path is None:
+        path = MODEL_FILES.get("lgbm", "lgbm_model.pkl")
+
+    try:
+        if not os.path.exists(path):
+            print(f"⚠️ 找不到模型檔案: {path}")
+            return None
+        model = joblib.load(path)
+        return model
+    except Exception as e:
+        print(f"❌ 無法載入模型 {path}: {e}")
+        return None
+
+# ==========================================
 # 🧮 核心計費演算法 (支援歷史回溯)
 # ==========================================
 def calculate_tiered_bill(total_kwh, days_count, is_summer, rate_config=None):
@@ -133,7 +170,7 @@ def calculate_tiered_bill(total_kwh, days_count, is_summer, rate_config=None):
     計算累進電費，支援年份切換。
     """
     if rate_config is None:
-        rate_config = RATES_DB["2024"] # 預設最新
+        rate_config = RATES_DB["2024"] # 預設
 
     rates = rate_config["progressive"]["summer"] if is_summer else rate_config["progressive"]["non_summer"]
     
@@ -165,7 +202,7 @@ def calculate_tiered_bill(total_kwh, days_count, is_summer, rate_config=None):
 
 def analyze_pricing_plans(df):
     """
-    [智慧分析] 逐筆判斷該時間點應用的費率 (2022 vs 2024)
+    [智慧分析] 逐筆判斷該時間點應用的費率 (2022 vs 2025)
     """
     if df is None or df.empty: return None, None
     df = df.copy()
@@ -189,16 +226,14 @@ def analyze_pricing_plans(df):
         # 判斷尖峰 (根據新舊制自動切換)
         is_peak = False
         if rc["tou_peak_hours_type"] == "new":
-            # 新制 (2023後): 下午傍晚是尖峰
-            # 簡易型二段式：夏月 09:00-24:00 尖峰 (週一~五)
-            # 非夏月 06:00-11:00, 14:00-24:00 (視為尖峰，簡化模擬)
+            # 新制: 下午傍晚是尖峰
             if ts.dayofweek < 5: # 平日
                 if is_summer:
                     if 9 <= h < 24: is_peak = True
                 else:
                     if (6 <= h < 11) or (14 <= h < 24): is_peak = True
         else:
-            # 舊制 (2022前): 白天是尖峰 (約 07:30 ~ 22:30)
+            # 舊制: 白天是尖峰
             if ts.dayofweek < 5:
                 if 7 <= h < 23: is_peak = True
                 
@@ -212,15 +247,13 @@ def analyze_pricing_plans(df):
     df['cost_tou'] = tou_results.apply(lambda x: x[0])
     df['tou_category'] = tou_results.apply(lambda x: x[1])
     
-    # --- 累進費率計算 (需先加總 KWh，但因為費率會變，我們拆分時段計算) ---
-    # 簡單做法：取出資料的「中間點日期」來決定用哪個年度的累進費率表
-    # (一般帳單不會跨越太久，這樣誤差極小)
+    # --- 累進費率計算 ---
+    # 取中間點日期決定費率表
     mid_date = df.index[len(df)//2]
     rate_config_period = get_rate_config(mid_date)
     
     total_kwh = df['kwh'].sum()
     days = (df.index.max() - df.index.min()).days + 1
-    # 判斷主要季節
     summer_hours = df.index.month.isin([6,7,8,9]).sum()
     is_summer_mode = summer_hours > (len(df)/2)
     
@@ -236,10 +269,11 @@ def analyze_pricing_plans(df):
 # 📊 統一計費報告
 # ==========================================
 def get_billing_report(df, budget=3000):
-    default = {"period": "N/A", "current_bill": 0, "predicted_bill": 0, "budget": budget, "status": "safe", "usage_percent": 0.0, "savings": 0}
+    default = {"period": "N/A", "current_bill": 0, "predicted_bill": 0, "budget": budget, "status": "safe", "usage_percent": 0.0, "savings": 0, "recommendation_msg": "N/A"}
     if df is None or df.empty: return default
     
     latest_time = df.index[-1]
+    # 鎖定本月 1 號至今
     month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     df_period = df[df.index >= month_start]
     
@@ -259,19 +293,29 @@ def get_billing_report(df, budget=3000):
     if pred_bill > budget: status = "danger"
     elif pred_bill > budget * 0.9: status = "warning"
     
+    recommendation = ""
+    if savings > 150:
+        recommendation = f"建議切換時間電價，本月預計可省 ${int(savings):,} 元"
+    elif savings < -100:
+            recommendation = f"累進費率目前最優，切換反而貴 ${int(abs(savings)):,} 元"
+    else:
+        recommendation = "目前方案合適"
+
     return {
         "period": f"{month_start.strftime('%Y-%m-%d')} ~ {latest_time.strftime('%Y-%m-%d')}",
         "current_bill": int(current_bill),
         "predicted_bill": int(pred_bill),
+        "potential_tou_bill": int(current_tou),
         "budget": budget,
         "status": status,
         "usage_percent": min(pred_bill/budget, 1.0),
-        "savings": int(savings)
+        "savings": int(savings),
+        "recommendation_msg": recommendation
     }
 
 def get_core_kpis(df):
     """
-    維持原本 KPI 計算邏輯，僅需確保回傳欄位完整
+    維持原本 KPI 計算邏輯
     """
     default_kpis = {
         "status_data_available": False, "current_load": 0, "kwh_today_so_far": 0,

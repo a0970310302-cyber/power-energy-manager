@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 # 從 app_utils 匯入我們需要的函式
+# 注意：已移除對 TOU_RATES_DATA 的依賴，改由 analyze_pricing_plans 自動處理
 from app_utils import (
     load_model, load_data, get_core_kpis, 
     analyze_pricing_plans, get_billing_report
@@ -157,10 +158,11 @@ def show_analysis_page():
 
                     # 顯示使用的費率版本
                     mid_date = start_date + (end_date - start_date)/2
-                    year_ver = "2024 (最新費率)"
-                    if mid_date.year < 2023: year_ver = "2022 (舊費率)"
-                    elif mid_date.year == 2023 and mid_date.month < 4: year_ver = "2022 (舊費率)"
-                    elif mid_date.year == 2023: year_ver = "2023 (過渡期費率)"
+                    year_ver = "2024~2025 (最新費率)"
+                    if mid_date < datetime(2022, 7, 1).date(): year_ver = "2022H1 (凍漲舊費率)"
+                    elif mid_date < datetime(2023, 4, 1).date(): year_ver = "2022H2 (大戶調漲費率)"
+                    elif mid_date < datetime(2024, 4, 1).date(): year_ver = "2023 (新時段費率)"
+                    elif mid_date >= datetime(2025, 10, 16).date(): year_ver = "2025 (114年新制)"
                     
                     st.caption(f"ℹ️ 計算基準：使用 {year_ver} 標準")
 
