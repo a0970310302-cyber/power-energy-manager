@@ -153,7 +153,9 @@ def main():
         st.stop() 
 
     # 3. 頁面路由
-    if st.session_state.page == "home":
+    if st.session_state.page == "tutorial":
+        show_tutorial_page()
+    elif st.session_state.page == "home":
         show_home_page()
     elif st.session_state.page == "dashboard":
         show_dashboard_page()
