@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore")
 # ==========================================
 # ⚙️ 設定常數
 # ==========================================
-DESIGN_PEAK_LOAD_KW = 20.0 
+DESIGN_PEAK_LOAD_KW = 4.0 
 
 MODEL_FILES = {
     "config": "hybrid_residual.pkl",    

@@ -11,8 +11,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ 全域設定與常數
 # ==========================================
-# 演示用放大倍率 (維持 20.0 以符合真實家庭負載)
-DESIGN_PEAK_LOAD_KW = 20.0 
+DESIGN_PEAK_LOAD_KW = 4.0 
 
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
