@@ -141,11 +141,11 @@ def load_model(path):
         return None
 
 # ==========================================
-# 📊 關鍵指標計算 (KPIs) - [修正重點]
+# 📊 關鍵指標計算 (KPIs) - [本次修正重點]
 # ==========================================
 def get_core_kpis(df):
     """
-    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比、本月累積用電
+    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比、本月累積、每週趨勢
     """
     if df is None or df.empty:
         return {
@@ -153,7 +153,8 @@ def get_core_kpis(df):
             "today_usage": 0,
             "yesterday_usage": 0,
             "delta_percent": 0,
-            "kwh_this_month_so_far": 0, # 防止空值報錯
+            "kwh_this_month_so_far": 0,
+            "weekly_delta_percent": 0, # 防止 Key Error
             "last_updated": "N/A"
         }
     
@@ -165,7 +166,7 @@ def get_core_kpis(df):
     # 2. 今日累積用電 (kWh)
     today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
     today_df = df[df.index >= today_start]
-    today_usage = today_df['power_kW'].sum() * 0.25 # 每15分一筆，故乘0.25
+    today_usage = today_df['power_kW'].sum() * 0.25
     
     # 3. 昨日同期累積用電 (kWh)
     yesterday_start = today_start - timedelta(days=1)
@@ -173,23 +174,37 @@ def get_core_kpis(df):
     yesterday_df = df[(df.index >= yesterday_start) & (df.index <= yesterday_end)]
     yesterday_usage = yesterday_df['power_kW'].sum() * 0.25
     
-    # 4. 差異百分比
+    # 4. 日差異百分比
     if yesterday_usage > 0:
         delta_percent = ((today_usage - yesterday_usage) / yesterday_usage) * 100
     else:
         delta_percent = 0
         
-    # 5. [新增] 本月累積用電 (kWh) - 修復 KeyError 的關鍵
+    # 5. 本月累積用電 (kWh)
     month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_df = df[df.index >= month_start]
     kwh_this_month_so_far = month_df['power_kW'].sum() * 0.25
+
+    # 6. [新增] 每週趨勢變化 (Weekly Delta %)
+    # 比較「過去7天」與「再前7天」的總用電量
+    seven_days_ago = latest_time - timedelta(days=7)
+    fourteen_days_ago = latest_time - timedelta(days=14)
+    
+    usage_last_7d = df[(df.index > seven_days_ago) & (df.index <= latest_time)]['power_kW'].sum() * 0.25
+    usage_prev_7d = df[(df.index > fourteen_days_ago) & (df.index <= seven_days_ago)]['power_kW'].sum() * 0.25
+    
+    if usage_prev_7d > 0:
+        weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
+    else:
+        weekly_delta = 0
         
     return {
         "current_load": round(current_load, 3),
         "today_usage": round(today_usage, 2),
         "yesterday_usage": round(yesterday_usage, 2),
         "delta_percent": round(delta_percent, 1),
-        "kwh_this_month_so_far": round(kwh_this_month_so_far, 2), # <--- 補上這個 Key
+        "kwh_this_month_so_far": round(kwh_this_month_so_far, 2),
+        "weekly_delta_percent": round(weekly_delta, 1), # <--- 補上這個 Key
         "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
     }
 
