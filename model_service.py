@@ -21,7 +21,7 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ==========================================
 # ⚙️ 設定與常數
 # ==========================================
-# [關鍵參數] 必須與 app_utils 保持一致，用於將歸一化數據還原為真實家庭負載
+# [關鍵參數] 用於還原/放大數據
 DESIGN_PEAK_LOAD_KW = 20.0 
 
 MODEL_FILES = {
@@ -37,7 +37,7 @@ MODEL_FILES = {
 LOOKBACK_HOURS = 168
 
 # ==========================================
-# 🛠️ 特徵工程 (包含 2025 完整假日)
+# 🛠️ 特徵工程
 # ==========================================
 def get_taiwan_holidays():
     holidays = [
@@ -116,7 +116,8 @@ def add_lstm_features(df):
 # ==========================================
 # 🧠 主預測流程
 # ==========================================
-def load_resources_and_predict():
+# [修復點] 這裡加上了 full_data_df 參數，解決 TypeError
+def load_resources_and_predict(full_data_df=None):
     resources = {}
     try:
         # 1. 載入模型
@@ -127,35 +128,44 @@ def load_resources_and_predict():
         resources['scaler_target'] = joblib.load(MODEL_FILES['scaler_target'])
         resources['weights'] = joblib.load(MODEL_FILES['weights'])
         
-        # 2. 準備數據 (讀取原始 CSV)
-        print("📥 [Model Service] 讀取本地歷史數據...")
-        if not os.path.exists(MODEL_FILES['history_data']):
-            print(f"❌ 錯誤：找不到檔案 {MODEL_FILES['history_data']}")
-            return None, None
-            
-        hist_df = pd.read_csv(MODEL_FILES['history_data'])
+        # 2. 準備數據
+        combined_df = None
         
-        if 'datetime' in hist_df.columns:
-             hist_df['timestamp'] = pd.to_datetime(hist_df['datetime'])
-        elif 'timestamp' in hist_df.columns:
-             hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
+        # [邏輯] 判斷資料來源並處理縮放
+        is_scaled_input = False
+        
+        if full_data_df is not None and not full_data_df.empty:
+            print("📥 [Model Service] 使用記憶體中的 DataFrame 進行預測...")
+            combined_df = full_data_df.copy()
+            # 檢查是否已經被 app_utils 放大過
+            if combined_df['power_kW'].max() > 1.0:
+                is_scaled_input = True
+                print(f"ℹ️ [Model Service] 輸入數據已縮放 (Max > 1.0)，準備進行預測前還原...")
         else:
-             print("❌ 錯誤：CSV 中找不到時間欄位")
-             return None, None
-
-        hist_df = hist_df.set_index('timestamp').sort_index()
-        if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
+            print("⚠️ [Model Service] 未收到數據，啟動 Fallback 讀檔模式...")
+            if not os.path.exists(MODEL_FILES['history_data']):
+                return None, None
+            hist_df = pd.read_csv(MODEL_FILES['history_data'])
+            if 'datetime' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['datetime'])
+            elif 'timestamp' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
+            hist_df = hist_df.set_index('timestamp').sort_index()
+            if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
+            combined_df = hist_df
         
-        # 建立運算用的 DataFrame (combined_df)
-        combined_df = hist_df.copy()
-        combined_df['power'] = pd.to_numeric(combined_df['power_kW'], errors='coerce')
-        combined_df = combined_df.dropna(subset=['power'])
+        # 建立預測用的 DataFrame (df_for_model)，模型需要原始小數值 (0.x)
+        df_for_model = combined_df.copy()
+        
+        # 如果輸入是大的 (20.0)，為了給模型吃，要除以倍率
+        if is_scaled_input:
+            df_for_model['power'] = df_for_model['power_kW'] / DESIGN_PEAK_LOAD_KW
+        else:
+            df_for_model['power'] = pd.to_numeric(df_for_model['power_kW'], errors='coerce')
 
-        print(f"🎉 [Model Service] 資料載入完畢！範圍: {combined_df.index.min()} ~ {combined_df.index.max()}")
-
-        # 3. 預測準備 (使用原始小數值進行預測)
+        df_for_model = df_for_model.dropna(subset=['power'])
+        
+        # 3. 預測準備
         buffer_size = 2000
-        df_ready = combined_df.iloc[-buffer_size:].copy()
+        df_ready = df_for_model.iloc[-buffer_size:].copy()
         last_time = df_ready.index[-1]
         
         future_dates = [last_time + timedelta(hours=i+1) for i in range(24)]
@@ -196,30 +206,26 @@ def load_resources_and_predict():
         pred_lstm_scaled = resources['lstm'].predict([X_seq, X_dir], verbose=0)
         pred_lstm = resources['scaler_target'].inverse_transform(pred_lstm_scaled).flatten()
         
-        # --- 集成 (得出原始預測值) ---
+        # --- 集成 (這是原始預測值 0.x) ---
         pred_final = (pred_lgbm * resources['weights']['w_lgbm']) + (pred_lstm * resources['weights']['w_lstm'])
         pred_final = np.maximum(pred_final, 0)
 
         # ==========================================
-        # 🚀 [關鍵修正] 輸出層統一放大 (Reality Booster)
+        # 🚀 輸出統一放大 (Reality Booster)
         # ==========================================
-        # 因為 app_utils 讀取資料時放大了 20 倍，這裡的預測值(0.x)和回傳的歷史資料(0.x)
-        # 都必須同步放大，圖表才不會斷裂。
-        
-        scale_factor = 1.0
-        # 如果偵測到原始資料很小 (歸一化數據)，就啟動放大
-        if combined_df['power'].max() < 1.0:
-            print(f"ℹ️ [Model Service] 偵測到歸一化數據，執行輸出放大 (x{DESIGN_PEAK_LOAD_KW})")
-            scale_factor = DESIGN_PEAK_LOAD_KW
+        # 為了讓 UI 圖表接合，我們必須回傳「大數值」
+        scale_factor = DESIGN_PEAK_LOAD_KW
             
         # 1. 放大預測值
         pred_final_scaled = pred_final * scale_factor
         pred_lgbm_scaled = pred_lgbm * scale_factor
         pred_lstm_scaled = pred_lstm * scale_factor
         
-        # 2. 放大回傳給 UI 的歷史資料
+        # 2. 準備回傳的歷史資料 (確保也是大的)
         ui_history_df = combined_df.copy()
-        ui_history_df['power_kW'] = ui_history_df['power'] * scale_factor
+        # 如果原本輸入就是大的，維持原樣；如果原本是讀檔(小的)，把它變大
+        if not is_scaled_input:
+             ui_history_df['power_kW'] = ui_history_df['power_kW'] * scale_factor
         
         # 打包結果
         result_df = pd.DataFrame({
