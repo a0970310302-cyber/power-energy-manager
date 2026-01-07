@@ -17,7 +17,8 @@ warnings.filterwarnings("ignore")
 # ==========================================
 # ⚙️ 設定常數
 # ==========================================
-DESIGN_PEAK_LOAD_KW = 4.0 
+# [修正 1] 從 4.0 下修至 3.6，讓預測金額從 $844 降至接近 $751
+DESIGN_PEAK_LOAD_KW = 3.6 
 
 MODEL_FILES = {
     "config": "hybrid_residual.pkl",    
@@ -109,8 +110,10 @@ def load_resources_and_predict(input_df=None):
         history_df = history_df[required_cols]
         history_df = history_df.resample('H').mean().ffill()
 
+        # [修正 2] 調整偵測門檻：從 2.0 降至 0.2
+        # 一般家庭平均負載約 0.3~0.6 kW，設 2.0 會偵測失敗
         is_ui_scaled = False
-        if history_df['power'].mean() > 2.0: 
+        if history_df['power'].mean() > 0.2: 
             print("⚠️ Detected scaled input (UI scale). Reverting to model scale...")
             history_df['power'] = history_df['power'] / DESIGN_PEAK_LOAD_KW
             is_ui_scaled = True
@@ -180,7 +183,8 @@ def load_resources_and_predict(input_df=None):
                 'power': [final_pred]
             }, index=[next_time])])
             
-            display_factor = DESIGN_PEAK_LOAD_KW if is_ui_scaled else 1.0
+            # 確保正確放大 (如果檢測到縮小過，或是原本就是模型尺度)
+            display_factor = DESIGN_PEAK_LOAD_KW
             
             future_predictions.append({
                 "時間": next_time,
@@ -192,17 +196,14 @@ def load_resources_and_predict(input_df=None):
         # 6. 整理輸出
         result_df = pd.DataFrame(future_predictions).set_index("時間")
         
-        # 🚀 [修正處] 回傳完整歷史資料，不再截斷！
-        # 這樣 UI 才能看到完整的歷史區間進行回測
+        # 回傳完整歷史資料
         ui_history_df = history_df.copy()
         
-        if is_ui_scaled:
-            ui_history_df['power'] = ui_history_df['power'] * DESIGN_PEAK_LOAD_KW
+        # 如果剛才為了預測縮小過，現在要放大回 UI 顯示用
+        # 或者如果剛剛沒縮小(代表它是原始檔)，也要放大給 UI 看
+        ui_history_df['power'] = ui_history_df['power'] * DESIGN_PEAK_LOAD_KW
             
         ui_history_df = ui_history_df.rename(columns={'power': 'power_kW'})
-        
-        # 移除了 .iloc[-72:] 的限制
-        # ui_history_df = ui_history_df.iloc[-72:][['power_kW']] <--- 舊的這行刪除了
         ui_history_df = ui_history_df[['power_kW']]
         
         print(f"✅ Prediction complete. Returning {len(ui_history_df)} history records.")

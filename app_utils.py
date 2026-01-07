@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ 全域設定與常數
 # ==========================================
-DESIGN_PEAK_LOAD_KW = 4.0 
+DESIGN_PEAK_LOAD_KW = 3.6  # 系統設計的最大負載 (千瓦) 
 
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
