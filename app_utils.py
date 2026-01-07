@@ -124,12 +124,17 @@ def load_data():
         return pd.DataFrame()
 
 # ==========================================
-# 🧠 模型載入工具
+# 🧠 模型載入工具 (修正版)
 # ==========================================
-def load_model(path):
+def load_model(path=None):
     """
-    載入 .pkl 模型檔案
+    載入 .pkl 模型檔案。
+    如果不指定 path，則預設載入 MODEL_FILES['lgbm']，解決 TypeError。
     """
+    # 如果沒給路徑，使用預設的 LGBM 模型
+    if path is None:
+        path = MODEL_FILES.get("lgbm", "lgbm_model.pkl")
+
     try:
         if not os.path.exists(path):
             print(f"⚠️ 找不到模型檔案: {path}")
@@ -141,72 +146,100 @@ def load_model(path):
         return None
 
 # ==========================================
-# 📊 關鍵指標計算 (KPIs) - [本次修正重點]
+# 📊 關鍵指標計算 (KPIs) - [全補齊版]
 # ==========================================
 def get_core_kpis(df):
     """
-    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比、本月累積、每週趨勢
+    計算首頁與儀表板顯示的關鍵指標
+    包含：status_data_available, cost_today_so_far, peak_kwh 等所有欄位
     """
-    if df is None or df.empty:
-        return {
-            "current_load": 0,
-            "today_usage": 0,
-            "yesterday_usage": 0,
-            "delta_percent": 0,
-            "kwh_this_month_so_far": 0,
-            "weekly_delta_percent": 0, # 防止 Key Error
-            "last_updated": "N/A"
-        }
-    
-    latest_time = df.index[-1]
-    
-    # 1. 目前負載 (kW)
-    current_load = df['power_kW'].iloc[-1]
-    
-    # 2. 今日累積用電 (kWh)
-    today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_df = df[df.index >= today_start]
-    today_usage = today_df['power_kW'].sum() * 0.25
-    
-    # 3. 昨日同期累積用電 (kWh)
-    yesterday_start = today_start - timedelta(days=1)
-    yesterday_end = latest_time - timedelta(days=1)
-    yesterday_df = df[(df.index >= yesterday_start) & (df.index <= yesterday_end)]
-    yesterday_usage = yesterday_df['power_kW'].sum() * 0.25
-    
-    # 4. 日差異百分比
-    if yesterday_usage > 0:
-        delta_percent = ((today_usage - yesterday_usage) / yesterday_usage) * 100
-    else:
-        delta_percent = 0
-        
-    # 5. 本月累積用電 (kWh)
-    month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_df = df[df.index >= month_start]
-    kwh_this_month_so_far = month_df['power_kW'].sum() * 0.25
-
-    # 6. [新增] 每週趨勢變化 (Weekly Delta %)
-    # 比較「過去7天」與「再前7天」的總用電量
-    seven_days_ago = latest_time - timedelta(days=7)
-    fourteen_days_ago = latest_time - timedelta(days=14)
-    
-    usage_last_7d = df[(df.index > seven_days_ago) & (df.index <= latest_time)]['power_kW'].sum() * 0.25
-    usage_prev_7d = df[(df.index > fourteen_days_ago) & (df.index <= seven_days_ago)]['power_kW'].sum() * 0.25
-    
-    if usage_prev_7d > 0:
-        weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
-    else:
-        weekly_delta = 0
-        
-    return {
-        "current_load": round(current_load, 3),
-        "today_usage": round(today_usage, 2),
-        "yesterday_usage": round(yesterday_usage, 2),
-        "delta_percent": round(delta_percent, 1),
-        "kwh_this_month_so_far": round(kwh_this_month_so_far, 2),
-        "weekly_delta_percent": round(weekly_delta, 1), # <--- 補上這個 Key
-        "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
+    # 預設回傳 (空值安全)
+    default_kpis = {
+        "status_data_available": False, # <--- 補上這個 Key
+        "current_load": 0,
+        "today_usage": 0,
+        "yesterday_usage": 0,
+        "delta_percent": 0,
+        "kwh_this_month_so_far": 0,
+        "weekly_delta_percent": 0,
+        "cost_today_so_far": 0,         # <--- 預判補上
+        "peak_kwh": 0,                  # <--- 預判補上
+        "off_peak_kwh": 0,              # <--- 預判補上
+        "last_updated": "N/A"
     }
+
+    if df is None or df.empty:
+        return default_kpis
+    
+    try:
+        latest_time = df.index[-1]
+        
+        # 1. 基礎指標
+        current_load = df['power_kW'].iloc[-1]
+        
+        # 今日累積
+        today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_df = df[df.index >= today_start]
+        today_usage = today_df['power_kW'].sum() * 0.25
+        
+        # 昨日同期
+        yesterday_start = today_start - timedelta(days=1)
+        yesterday_end = latest_time - timedelta(days=1)
+        yesterday_df = df[(df.index >= yesterday_start) & (df.index <= yesterday_end)]
+        yesterday_usage = yesterday_df['power_kW'].sum() * 0.25
+        
+        # 差異百分比
+        if yesterday_usage > 0:
+            delta_percent = ((today_usage - yesterday_usage) / yesterday_usage) * 100
+        else:
+            delta_percent = 0
+            
+        # 本月累積
+        month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_df = df[df.index >= month_start]
+        kwh_this_month_so_far = month_df['power_kW'].sum() * 0.25
+
+        # 每週趨勢
+        seven_days_ago = latest_time - timedelta(days=7)
+        fourteen_days_ago = latest_time - timedelta(days=14)
+        usage_last_7d = df[(df.index > seven_days_ago) & (df.index <= latest_time)]['power_kW'].sum() * 0.25
+        usage_prev_7d = df[(df.index > fourteen_days_ago) & (df.index <= seven_days_ago)]['power_kW'].sum() * 0.25
+        
+        if usage_prev_7d > 0:
+            weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
+        else:
+            weekly_delta = 0
+
+        # [新增] 今日預估花費 (cost_today_so_far) - 簡單估算
+        # 假設平均費率 4 元 (混合尖離峰)
+        cost_today_so_far = today_usage * 4.0
+
+        # [新增] 尖離峰度數分佈 (最近30天) - 簡單估算供 Dashboard 圓餅圖用
+        # 這裡做一個快速的 30 天統計，避免太複雜的邏輯
+        days_30_ago = latest_time - timedelta(days=30)
+        recent_df = df[df.index > days_30_ago].copy()
+        
+        # 簡單判定尖峰 (16-22 為尖峰)
+        recent_df['is_peak'] = recent_df.index.hour.isin([16, 17, 18, 19, 20, 21])
+        peak_kwh = recent_df[recent_df['is_peak']]['power_kW'].sum() * 0.25
+        off_peak_kwh = recent_df[~recent_df['is_peak']]['power_kW'].sum() * 0.25
+
+        return {
+            "status_data_available": True, # <--- 只要有資料就是 True
+            "current_load": round(current_load, 3),
+            "today_usage": round(today_usage, 2),
+            "yesterday_usage": round(yesterday_usage, 2),
+            "delta_percent": round(delta_percent, 1),
+            "kwh_this_month_so_far": round(kwh_this_month_so_far, 2),
+            "weekly_delta_percent": round(weekly_delta, 1),
+            "cost_today_so_far": round(cost_today_so_far, 1),
+            "peak_kwh": round(peak_kwh, 1),
+            "off_peak_kwh": round(off_peak_kwh, 1),
+            "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
+        }
+    except Exception as e:
+        print(f"⚠️ KPI 計算錯誤: {e}")
+        return default_kpis
 
 # ==========================================
 # ⚡ 電費分析邏輯
