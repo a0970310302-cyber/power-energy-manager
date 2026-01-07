@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 # ==========================================
-# 🚑 [設定] 抑制警告 & 相容性設定
+# 🚑 [設定] 抑制警告
 # ==========================================
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -21,23 +21,20 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ==========================================
 # ⚙️ 設定與常數
 # ==========================================
-# [關鍵參數] 用於還原/放大數據，必須與 app_utils 一致
 DESIGN_PEAK_LOAD_KW = 20.0 
 
+# [更新] 使用新的檔案路徑
 MODEL_FILES = {
-    "lgbm": "lgbm_model.pkl",
-    "lstm": "lstm_model.keras",
-    "scaler_seq": "scaler_seq.pkl",
-    "scaler_dir": "scaler_dir.pkl",
-    "scaler_target": "scaler_target.pkl",
-    "weights": "ensemble_weights.pkl",
+    "config": "hybrid_residual.pkl",
+    "lgbm": "lgbm_residual.pkl",
+    "lstm": "lstm_hybrid.keras",
     "history_data": "final_training_data_with_humidity.csv"
 }
 
 LOOKBACK_HOURS = 168
 
 # ==========================================
-# 🛠️ 特徵工程
+# 🛠️ 進階特徵工程 (適配 Residual 模型)
 # ==========================================
 def get_taiwan_holidays():
     holidays = [
@@ -58,117 +55,100 @@ def get_taiwan_holidays():
     ]
     return holidays
 
-def add_lgbm_features(df):
+def create_hybrid_features(df):
+    """
+    產生 Hybrid Model 所需的所有特徵
+    """
     df = df.copy()
+    
+    # 時間特徵
     df["hour"] = df.index.hour
     df["day_of_week"] = df.index.dayofweek
     df["month"] = df.index.month
     
-    tw_holidays = get_taiwan_holidays()
-    date_strs = df.index.strftime("%Y-%m-%d")
-    
-    df["is_holiday_or_weekend"] = ((df["day_of_week"] >= 5) | (date_strs.isin(tw_holidays))).astype(int)
-    df["is_weekend"] = df["is_holiday_or_weekend"]
-    
+    # 週期性編碼
     df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24.0)
     df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24.0)
     df["week_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7.0)
     df["week_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7.0)
-    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12.0)
-    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12.0)
     
-    peak_hours = [10, 11, 12, 13, 14, 15, 17, 18, 19, 20]
-    df["is_peak"] = df["hour"].isin(peak_hours).astype(int)
-    
-    for lag in [24, 168, 720]:
-         if f'lag_{lag}h' not in df.columns: df[f'lag_{lag}h'] = df["power"].shift(lag)
-    for i in [1, 2, 3]:
-        if f'temp_lag_{i}' not in df.columns: df[f'temp_lag_{i}'] = df["temperature"].shift(i)
-    for window_days in [7, 14, 30]:
-        window_hours = window_days * 24
-        df[f'ma_{window_days}d'] = df["power"].shift(1).rolling(window=window_hours, min_periods=1).mean()
-        df[f'std_{window_days}d'] = df["power"].shift(1).rolling(window=window_hours, min_periods=1).std()
-    
-    df["temp_x_peak"] = df["temperature"] * df["is_peak"]
-    df["temp_squared"] = df["temperature"] ** 2
-    return df
-
-def add_lstm_features(df):
-    df = df.copy()
-    df["hour"] = df.index.hour.astype(float)
+    # 假日
     tw_holidays = get_taiwan_holidays()
     date_strs = df.index.strftime("%Y-%m-%d")
-    df["is_weekend"] = ((df.index.dayofweek >= 5) | (date_strs.isin(tw_holidays))).astype(float)
-    df["day_of_week"] = df.index.dayofweek.astype(float)
-    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24.0)
-    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24.0)
-    df["week_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7.0)
-    df["week_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7.0)
+    df["is_weekend"] = ((df["day_of_week"] >= 5) | (date_strs.isin(tw_holidays))).astype(int)
+    
+    # 互動特徵 (溫度相關)
     df["temp_squared"] = df["temperature"] ** 2
-    df["lag_24h"] = df["power"].shift(24)
-    df["lag_168h"] = df["power"].shift(168)
-    df["rolling_mean_24h_safe"] = df["power"].shift(24).rolling(window=24, min_periods=1).mean()
-    df["rolling_std_24h_safe"] = df["power"].shift(24).rolling(window=24, min_periods=1).std()
-    df["rolling_mean_168h"] = df["power"].shift(24).rolling(window=168, min_periods=1).mean()
-    df["rolling_std_168h"] = df["power"].shift(24).rolling(window=168, min_periods=1).std()
+    df["temp_humidity"] = df["temperature"] * df["humidity"]
+    
+    # 滾動特徵 (Rolling)
+    for w in [24, 72]:
+        df[f'temp_roll_{w}'] = df['temperature'].rolling(window=w, min_periods=1).mean()
+        
+    df['rolling_mean_24h'] = df['power'].shift(1).rolling(window=24, min_periods=1).mean()
+    df['rolling_max_24h'] = df['power'].shift(1).rolling(window=24, min_periods=1).max()
+    df['rolling_min_24h'] = df['power'].shift(1).rolling(window=24, min_periods=1).min()
+    df['rolling_mean_7d'] = df['power'].shift(1).rolling(window=168, min_periods=1).mean()
+    df['rolling_mean_3h'] = df['power'].shift(1).rolling(window=3, min_periods=1).mean() # LSTM 用
+    
+    # Lag 特徵
+    for lag in [24, 48, 168]:
+        df[f'lag_{lag}'] = df['power'].shift(lag)
+        df[f'lag_{lag}h'] = df['power'].shift(lag) # 兼容命名
+        
+    df['diff_24_48'] = df['lag_24'] - df['lag_48']
+    
     return df
 
 # ==========================================
 # 🧠 主預測流程
 # ==========================================
-# [修復] 這裡一定要加上 full_data_df 參數，否則 app.py 傳資料進來會報錯
 def load_resources_and_predict(full_data_df=None):
     resources = {}
     try:
-        # 1. 載入模型
+        # 1. 載入模型與設定
+        print("📥 [Model Service] 正在載入混合模型資源...")
+        config = joblib.load(MODEL_FILES['config']) # hybrid_residual.pkl
         resources['lgbm'] = joblib.load(MODEL_FILES['lgbm'])
         resources['lstm'] = keras.models.load_model(MODEL_FILES['lstm'])
-        resources['scaler_seq'] = joblib.load(MODEL_FILES['scaler_seq'])
-        resources['scaler_dir'] = joblib.load(MODEL_FILES['scaler_dir'])
-        resources['scaler_target'] = joblib.load(MODEL_FILES['scaler_target'])
-        resources['weights'] = joblib.load(MODEL_FILES['weights'])
+        resources['scaler_seq'] = config['scaler_seq']
+        # resources['scaler_direct'] = config.get('scaler_direct', None) # 視情況使用
         
         # 2. 準備數據
         combined_df = None
         is_scaled_input = False
         
-        # 判斷是否有從 app.py 傳入資料
         if full_data_df is not None and not full_data_df.empty:
-            print("📥 [Model Service] 使用記憶體中的 DataFrame 進行預測...")
             combined_df = full_data_df.copy()
-            # 檢查輸入的數據是否已經被放大過 (Max > 1.0)
             if combined_df['power_kW'].max() > 1.0:
                 is_scaled_input = True
         else:
-            print("⚠️ [Model Service] 未收到數據，啟動 Fallback 讀檔模式...")
-            if not os.path.exists(MODEL_FILES['history_data']):
-                return None, None
+            if not os.path.exists(MODEL_FILES['history_data']): return None, None
             hist_df = pd.read_csv(MODEL_FILES['history_data'])
             if 'datetime' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['datetime'])
             elif 'timestamp' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
             hist_df = hist_df.set_index('timestamp').sort_index()
             if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
             combined_df = hist_df
-        
-        # 建立預測用的 DataFrame (df_for_model)，模型需要吃「原始小數值 (0.x)」
-        df_for_model = combined_df.copy()
-        
-        # 如果輸入是大的 (20.0)，為了給模型預測，要先「還原」回小數值
-        if is_scaled_input:
-            df_for_model['power'] = df_for_model['power_kW'] / DESIGN_PEAK_LOAD_KW
-        else:
-            df_for_model['power'] = pd.to_numeric(df_for_model['power_kW'], errors='coerce')
 
-        df_for_model = df_for_model.dropna(subset=['power'])
+        # 還原為小數值 (Normalized Scale)
+        df_model = combined_df.copy()
+        if is_scaled_input:
+            df_model['power'] = df_model['power_kW'] / DESIGN_PEAK_LOAD_KW
+        else:
+            df_model['power'] = pd.to_numeric(df_model['power_kW'], errors='coerce')
         
-        # 3. 預測準備
+        df_model = df_model.dropna(subset=['power'])
+        
+        # 3. 準備預測區間 (Buffer)
         buffer_size = 2000
-        df_ready = df_for_model.iloc[-buffer_size:].copy()
+        df_ready = df_model.iloc[-buffer_size:].copy()
         last_time = df_ready.index[-1]
         
         future_dates = [last_time + timedelta(hours=i+1) for i in range(24)]
         future_df = pd.DataFrame(index=future_dates, columns=df_ready.columns)
         
+        # 簡單填補未來環境特徵
         if 'temperature' in df_ready.columns: future_df['temperature'] = df_ready['temperature'].iloc[-1]
         else: future_df['temperature'] = 25.0
         if 'humidity' in df_ready.columns: future_df['humidity'] = df_ready['humidity'].iloc[-1]
@@ -176,62 +156,68 @@ def load_resources_and_predict(full_data_df=None):
         
         full_context = pd.concat([df_ready, future_df])
         
-        # 4. 特徵工程
-        df_lgbm = add_lgbm_features(full_context)
-        df_lstm = add_lstm_features(full_context)
+        # 4. 產生基礎特徵
+        full_feat = create_hybrid_features(full_context)
         
-        target_feat_lgbm = df_lgbm.iloc[-24:]
+        # ======================================
+        # Step A: LSTM 預測 (第一層)
+        # ======================================
+        # LSTM 輸入準備 (Sequence)
+        # 根據 config 中的 lstm_seq_cols: ['power', 'temperature', 'humidity']
+        lstm_cols = config['lstm_seq_cols']
         
-        # --- LGBM 推論 ---
-        lgbm_feature_names = resources['lgbm'].feature_name()
-        X_lgbm = target_feat_lgbm[lgbm_feature_names]
-        pred_lgbm = resources['lgbm'].predict(X_lgbm)
+        # 取得最後一段歷史作為輸入
+        # LSTM input shape: (1, 168, 3)
+        current_idx = -25 # 未來的第一個點的前一個位置
+        seq_data = full_feat[lstm_cols].iloc[current_idx-LOOKBACK_HOURS+1 : current_idx+1].values
         
-        # --- LSTM 推論 ---
-        current_idx = -25
-        seq_cols = ["power", "temperature", "humidity", "hour_sin", "hour_cos", "is_weekend"]
-        dir_cols = ["lag_24h", "lag_168h", "temperature", "humidity", "hour_sin", "hour_cos", "week_sin", "week_cos", "is_weekend", "temp_squared", "rolling_mean_24h_safe", "rolling_std_24h_safe", "rolling_mean_168h", "rolling_std_168h"]
-        
-        for c in seq_cols + dir_cols:
-            if c not in df_lstm.columns: df_lstm[c] = 0
-        
-        seq_data = df_lstm[seq_cols].iloc[current_idx-LOOKBACK_HOURS+1 : current_idx+1]
-        dir_data = df_lstm[dir_cols].iloc[current_idx+1 : current_idx+2]
-        
+        # Scaling
         X_seq = resources['scaler_seq'].transform(seq_data).reshape(1, LOOKBACK_HOURS, -1)
-        X_dir = resources['scaler_dir'].transform(dir_data)
         
-        pred_lstm_scaled = resources['lstm'].predict([X_seq, X_dir], verbose=0)
-        pred_lstm = resources['scaler_target'].inverse_transform(pred_lstm_scaled).flatten()
+        # Predict
+        # 這裡假設 LSTM 輸出的是單點預測，我們簡單用來當作未來趨勢的基準
+        # 為了產生 24 小時的預測特徵，我們這裡做一個簡化：
+        # 用 LSTM 預測出來的值，填滿未來的 lstm_pred 欄位
+        pred_lstm_val = resources['lstm'].predict(X_seq, verbose=0).flatten()[0]
         
-        # --- 集成 (得出原始預測值 0.x) ---
-        pred_final = (pred_lgbm * resources['weights']['w_lgbm']) + (pred_lstm * resources['weights']['w_lstm'])
-        pred_final = np.maximum(pred_final, 0)
-
-        # ==========================================
-        # 🚀 輸出統一放大 (Reality Booster)
-        # ==========================================
-        # 為了讓 UI 圖表接合，回傳前必須把預測值和歷史資料都「放大」到 20.0 的等級
-        scale_factor = DESIGN_PEAK_LOAD_KW
+        # 將 LSTM 預測值放入特徵中 (給 LGBM 用)
+        # 這裡假設未來 24 小時的 LSTM 預測值是一個平滑的趨勢或定值
+        # 若你的 LSTM 是輸出 24 小時序列，則直接填入；若是單點，則廣播
+        full_feat['lstm_pred'] = 0.0
+        full_feat.iloc[-24:, full_feat.columns.get_loc('lstm_pred')] = pred_lstm_val
+        
+        # ======================================
+        # Step B: LightGBM 預測 (第二層 / 殘差修正)
+        # ======================================
+        lgbm_cols = config['lgbm_feature_cols']
+        target_feat = full_feat.iloc[-24:].copy()
+        
+        # 補齊缺失欄位 (防呆)
+        for c in lgbm_cols:
+            if c not in target_feat.columns: target_feat[c] = 0
             
-        # 1. 放大預測值
-        pred_final_scaled = pred_final * scale_factor
-        pred_lgbm_scaled = pred_lgbm * scale_factor
-        pred_lstm_scaled = pred_lstm * scale_factor
+        X_lgbm = target_feat[lgbm_cols]
+        pred_final = resources['lgbm'].predict(X_lgbm)
+        pred_final = np.maximum(pred_final, 0)
         
-        # 2. 準備回傳的歷史資料
-        # 我們必須確保回傳給 UI 畫圖的歷史資料也是「放大版」的
+        # ======================================
+        # 🚀 輸出放大
+        # ======================================
+        scale_factor = DESIGN_PEAK_LOAD_KW
+        pred_final_scaled = pred_final * scale_factor
+        
+        # 為了畫圖，我們也把 LSTM 的中間產物輸出出來看
+        pred_lstm_scaled = np.full(24, pred_lstm_val * scale_factor)
+        
         ui_history_df = combined_df.copy()
-        # 如果原本輸入的是小數值(Fallback模式)，這裡要乘倍率；如果原本就是大數值，則不變
         if not is_scaled_input:
              ui_history_df['power_kW'] = ui_history_df['power_kW'] * scale_factor
         
-        # 打包結果
         result_df = pd.DataFrame({
             "時間": future_dates,
             "預測值": pred_final_scaled,
-            "LGBM": pred_lgbm_scaled,
-            "LSTM": pred_lstm_scaled
+            "LSTM (特徵)": pred_lstm_scaled, # 這是 LSTM 給 LGBM 的參考值
+            "LGBM (最終)": pred_final_scaled # 在此架構下，LGBM 輸出即為最終結果
         }).set_index("時間")
         
         return result_df, ui_history_df

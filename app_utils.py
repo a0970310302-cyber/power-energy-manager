@@ -11,22 +11,21 @@ from datetime import datetime, timedelta
 # ==========================================
 # ⚙️ 全域設定與常數
 # ==========================================
-# 演示用放大倍率 (需與 model_service 保持一致)
+# 演示用放大倍率 (維持 20.0 以符合真實家庭負載)
 DESIGN_PEAK_LOAD_KW = 20.0 
 
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
+
+# [關鍵修改] 更新為新版混合模型的檔案路徑
 MODEL_FILES = {
-    "lgbm": "lgbm_model.pkl",
-    "lstm": "lstm_model.keras",
-    "scaler_seq": "scaler_seq.pkl",
-    "scaler_dir": "scaler_dir.pkl",
-    "scaler_target": "scaler_target.pkl",
-    "weights": "ensemble_weights.pkl",
+    "config": "hybrid_residual.pkl",    # 總指揮官 (含 Scalers)
+    "lgbm": "lgbm_residual.pkl",        # 殘差修正模型
+    "lstm": "lstm_hybrid.keras",        # 序列預測模型
     "history_data": "final_training_data_with_humidity.csv"
 }
 
 # ==========================================
-# 📅 歷史費率資料庫 (含 114 年新制)
+# 📅 歷史費率資料庫 (Rate History DB)
 # ==========================================
 RATES_DB = {
     "2022_H1": {
@@ -61,7 +60,7 @@ RATES_DB = {
         "tou": {"summer": {"peak": 5.01, "off": 1.96}, "non_summer": {"peak": 4.78, "off": 1.89}},
         "tou_peak_hours_type": "new"
     },
-    "2025": { # 114年10月起
+    "2025": {
         "progressive": {
             "summer": [1.78, 2.55, 3.80, 5.14, 6.44, 8.86],
             "non_summer": [1.78, 2.26, 3.13, 4.24, 5.27, 7.03]
@@ -80,7 +79,7 @@ def get_rate_config(date_obj):
     else: return RATES_DB["2025"]
 
 # ==========================================
-# 📥 資料載入 (一致性放大)
+# 📥 資料載入
 # ==========================================
 def load_data():
     if not os.path.exists(CSV_FILE_PATH): return pd.DataFrame()
@@ -111,10 +110,11 @@ def load_lottiefile(filepath):
     except: return None
 
 # ==========================================
-# 🧠 模型載入工具 (已修復)
+# 🧠 模型載入工具
 # ==========================================
 def load_model(path=None):
-    if path is None: path = MODEL_FILES.get("lgbm", "lgbm_model.pkl")
+    # 預設載入 config (因為現在它是核心)
+    if path is None: path = MODEL_FILES.get("config", "hybrid_residual.pkl")
     try:
         if not os.path.exists(path): return None
         return joblib.load(path)
