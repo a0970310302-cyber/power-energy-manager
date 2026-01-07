@@ -10,13 +10,13 @@ import joblib
 from datetime import datetime, timedelta
 
 # ==========================================
-# ⚙️ 全域設定與常數 (補齊所有頁面需要的變數)
+# ⚙️ 全域設定與常數
 # ==========================================
 POWER_PANTRY_ID = "6a2e85f5-4af4-4efd-bb9f-c5604fe8475e"
 TARGET_YEARS = [2023, 2024, 2025, 2026]
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
-# 1. 模型檔案路徑 (page_analysis.py 需要)
+# 1. 模型檔案路徑
 MODEL_FILES = {
     "lgbm": "lgbm_model.pkl",
     "lstm": "lstm_model.keras",
@@ -27,25 +27,24 @@ MODEL_FILES = {
     "history_data": "final_training_data_with_humidity.csv"
 }
 
-# 2. 時間電價費率表 (page_analysis.py 需要)
-# 這裡定義了 夏月/非夏月 的 尖峰/離峰 價格與時段，供分析圖表參考
+# 2. 時間電價費率表
 TOU_RATES_DATA = {
     "summer": {
         "dates": "6/1 ~ 9/30",
-        "peak_price": 6.0,      # 尖峰電價 (假設值)
-        "off_peak_price": 1.8,  # 離峰電價
-        "peak_hours": [16, 17, 18, 19, 20, 21] # 16:00~22:00
+        "peak_price": 6.0,
+        "off_peak_price": 1.8,
+        "peak_hours": [16, 17, 18, 19, 20, 21]
     },
     "non_summer": {
         "dates": "10/1 ~ 5/31",
         "peak_price": 5.0,
         "off_peak_price": 1.7,
-        "peak_hours": [15, 16, 17, 18, 19, 20] # 15:00~21:00
+        "peak_hours": [15, 16, 17, 18, 19, 20]
     }
 }
 
 # ==========================================
-# 🎨 Lottie 動畫載入工具 (app.py 需要)
+# 🎨 Lottie 動畫載入工具
 # ==========================================
 def load_lottiefile(filepath: str):
     """
@@ -74,14 +73,12 @@ def load_lottieurl(url: str):
         return None
 
 # ==========================================
-# 📥 資料載入邏輯 (所有頁面共用 - 離線版)
+# 📥 資料載入邏輯 (離線版)
 # ==========================================
 def load_data():
     """
     離線模式：直接讀取本地 CSV 檔案
     """
-    # print("📂 [App Utils] 正在讀取本地歷史資料 (離線模式)...") # 減少 log 雜訊
-    
     if not os.path.exists(CSV_FILE_PATH):
         print(f"❌ 錯誤：找不到檔案 {CSV_FILE_PATH}")
         return pd.DataFrame()
@@ -110,7 +107,6 @@ def load_data():
         
         # --- 資料清洗 ---
         if 'isMissingData' in df.columns:
-            # 處理各種可能的缺失標記
             df.loc[df['isMissingData'] == 1, 'power_kW'] = np.nan
             df.loc[df['isMissingData'] == '1', 'power_kW'] = np.nan
             
@@ -121,7 +117,6 @@ def load_data():
         if 'humidity' not in df.columns:
             df['humidity'] = 70.0
             
-        # print(f"✅ [App Utils] 資料載入成功！") 
         return df[['power_kW', 'temperature', 'humidity']]
         
     except Exception as e:
@@ -129,7 +124,7 @@ def load_data():
         return pd.DataFrame()
 
 # ==========================================
-# 🧠 模型載入工具 (page_analysis.py 需要)
+# 🧠 模型載入工具
 # ==========================================
 def load_model(path):
     """
@@ -146,11 +141,11 @@ def load_model(path):
         return None
 
 # ==========================================
-# 📊 關鍵指標計算 (page_home.py 需要)
+# 📊 關鍵指標計算 (KPIs) - [修正重點]
 # ==========================================
 def get_core_kpis(df):
     """
-    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比
+    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比、本月累積用電
     """
     if df is None or df.empty:
         return {
@@ -158,6 +153,7 @@ def get_core_kpis(df):
             "today_usage": 0,
             "yesterday_usage": 0,
             "delta_percent": 0,
+            "kwh_this_month_so_far": 0, # 防止空值報錯
             "last_updated": "N/A"
         }
     
@@ -169,7 +165,7 @@ def get_core_kpis(df):
     # 2. 今日累積用電 (kWh)
     today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
     today_df = df[df.index >= today_start]
-    today_usage = today_df['power_kW'].sum() * 0.25 # 假設每15分鐘一筆，轉為kWh
+    today_usage = today_df['power_kW'].sum() * 0.25 # 每15分一筆，故乘0.25
     
     # 3. 昨日同期累積用電 (kWh)
     yesterday_start = today_start - timedelta(days=1)
@@ -183,16 +179,22 @@ def get_core_kpis(df):
     else:
         delta_percent = 0
         
+    # 5. [新增] 本月累積用電 (kWh) - 修復 KeyError 的關鍵
+    month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_df = df[df.index >= month_start]
+    kwh_this_month_so_far = month_df['power_kW'].sum() * 0.25
+        
     return {
         "current_load": round(current_load, 3),
         "today_usage": round(today_usage, 2),
         "yesterday_usage": round(yesterday_usage, 2),
         "delta_percent": round(delta_percent, 1),
+        "kwh_this_month_so_far": round(kwh_this_month_so_far, 2), # <--- 補上這個 Key
         "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
     }
 
 # ==========================================
-# ⚡ 電費分析邏輯 (page_home.py, page_dashboard.py 需要)
+# ⚡ 電費分析邏輯
 # ==========================================
 def analyze_pricing_plans(df):
     if df is None or df.empty:
@@ -204,16 +206,14 @@ def analyze_pricing_plans(df):
     if 'month' not in df.columns:
         df['month'] = df.index.month
     
-    # 引用上方定義的 TOU_RATES_DATA 來保持一致性
     summer_peak_price = TOU_RATES_DATA['summer']['peak_price']
     summer_off_price = TOU_RATES_DATA['summer']['off_peak_price']
     non_summer_peak_price = TOU_RATES_DATA['non_summer']['peak_price']
     non_summer_off_price = TOU_RATES_DATA['non_summer']['off_peak_price']
 
-    # 1. 累進費率估算 (簡易版)
+    # 1. 累進費率估算
     def calculate_progressive_cost(row):
         is_summer = 6 <= row.name.month <= 9
-        # 假設費率
         rate = 4.5 if is_summer else 3.5
         return row['power_kW'] * rate
 
@@ -225,11 +225,9 @@ def analyze_pricing_plans(df):
         
         is_peak = False
         if is_summer:
-            # 使用 TOU_RATES_DATA 定義的時段 (16~22)
             if hour in TOU_RATES_DATA['summer']['peak_hours']: 
                 is_peak = True
         else:
-            # 使用 TOU_RATES_DATA 定義的時段 (15~21)
             if hour in TOU_RATES_DATA['non_summer']['peak_hours']: 
                 is_peak = True
             
