@@ -7,7 +7,7 @@ import traceback
 from streamlit_lottie import st_lottie
 
 # 匯入 UI 模組
-from app_utils import load_lottiefile, load_data  # 確保有匯入 load_data
+from app_utils import load_lottiefile, load_data
 from page_home import show_home_page
 from page_dashboard import show_dashboard_page
 from page_analysis import show_analysis_page
@@ -20,13 +20,19 @@ from model_service import load_resources_and_predict
 st.set_page_config(layout="wide", page_title="智慧電能管家", page_icon="⚡")
 
 # ==========================================
-# 🔍 系統健康檢查
+# 🔍 系統健康檢查 (已更新為 Hybrid 架構)
 # ==========================================
 def check_system_integrity():
     if not st.session_state.get("app_ready", False):
         try:
             files = os.listdir('.')
-            required = ["final_training_data_with_humidity.csv", "lgbm_model.pkl", "lstm_model.keras"]
+            # [關鍵修正] 更新為新版模型所需的檔案清單
+            required = [
+                "final_training_data_with_humidity.csv", 
+                "hybrid_residual.pkl",  # 新的總指揮官 (Config)
+                "lgbm_residual.pkl",    # 新的 LGBM
+                "lstm_hybrid.keras"     # 新的 LSTM
+            ]
             missing = [f for f in required if f not in files]
             
             if missing:
@@ -50,7 +56,7 @@ if "current_data" not in st.session_state:
     st.session_state.current_data = None
 
 # ==========================================
-# 資料載入核心 (同步模式)
+# 資料載入核心
 # ==========================================
 def initialize_system():
     """
@@ -84,7 +90,7 @@ def initialize_system():
             progress_bar.progress(40)
             
             # --- 2. 將資料傳給模型服務 ---
-            # 這裡將 df_history 傳入，model_service 會自動偵測並縮小數值進行預測，最後再放大回傳
+            # 傳入 df_history，確保模型使用相同的資料基礎
             pred_df, curr_df = load_resources_and_predict(df_history)
             
             progress_bar.progress(90)
@@ -140,7 +146,7 @@ def main():
             st.rerun()
             
         st.markdown("---")
-        st.caption(f"Ver 1.0.0 | System Status: {'🟢 Online' if st.session_state.app_ready else '🟡 Loading'}")
+        st.caption(f"Ver 2.0.0 (Hybrid Residual) | Status: {'🟢 Online' if st.session_state.app_ready else '🟡 Loading'}")
 
     # 2. 系統初始化守門員
     if not initialize_system():
