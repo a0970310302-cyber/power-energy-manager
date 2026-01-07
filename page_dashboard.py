@@ -97,8 +97,7 @@ def show_dashboard_page():
     tab1, tab2 = st.tabs(["預測 vs 真實", "詳細歷史數據"])
     
     with tab1:
-        # 1. 準備歷史資料 (最近 3 天)
-        df_hist_plot = df_history.last('3D').copy()
+        df_hist_plot = df_history.last('60D').copy()
         
         # 過濾掉尾端無效值
         if not df_hist_plot.empty:
