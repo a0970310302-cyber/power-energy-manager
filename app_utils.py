@@ -5,7 +5,8 @@ import pandas as pd
 import numpy as np
 import os
 import re
-import json  # <--- 補上這個，讀取 Lottie 檔案需要
+import json
+from datetime import datetime, timedelta
 
 # ==========================================
 # ⚙️ 設定 (離線模式)
@@ -15,11 +16,11 @@ TARGET_YEARS = [2023, 2024, 2025, 2026]
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
 # ==========================================
-# 🎨 Lottie 動畫載入工具 (已修復)
+# 🎨 Lottie 動畫載入工具
 # ==========================================
 def load_lottiefile(filepath: str):
     """
-    [補回] 載入本地 Lottie JSON 檔案
+    載入本地 Lottie JSON 檔案
     """
     try:
         with open(filepath, "r", encoding='utf-8') as f:
@@ -48,7 +49,7 @@ def load_lottieurl(url: str):
 # ==========================================
 def load_data():
     """
-    離線模式：直接讀取本地 CSV 檔案，不進行網路請求
+    離線模式：直接讀取本地 CSV 檔案
     """
     print("📂 [App Utils] 正在讀取本地歷史資料 (離線模式)...")
     
@@ -98,6 +99,55 @@ def load_data():
         return pd.DataFrame()
 
 # ==========================================
+# 📊 關鍵指標計算 (KPIs) - [補回]
+# ==========================================
+def get_core_kpis(df):
+    """
+    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比
+    """
+    if df is None or df.empty:
+        return {
+            "current_load": 0,
+            "today_usage": 0,
+            "yesterday_usage": 0,
+            "delta_percent": 0,
+            "last_updated": "N/A"
+        }
+    
+    # 取得最新一筆資料的時間
+    latest_time = df.index[-1]
+    
+    # 1. 目前負載 (kW)
+    current_load = df['power_kW'].iloc[-1]
+    
+    # 2. 今日累積用電 (kWh)
+    # 定義「今日」的範圍 (從當天 00:00 到最新時間)
+    today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_df = df[df.index >= today_start]
+    # 計算方式：功率(kW) * 時間(0.25小時, 因為是15分一筆)
+    today_usage = today_df['power_kW'].sum() * 0.25
+    
+    # 3. 昨日同期累積用電 (kWh)
+    yesterday_start = today_start - timedelta(days=1)
+    yesterday_end = latest_time - timedelta(days=1)
+    yesterday_df = df[(df.index >= yesterday_start) & (df.index <= yesterday_end)]
+    yesterday_usage = yesterday_df['power_kW'].sum() * 0.25
+    
+    # 4. 差異百分比
+    if yesterday_usage > 0:
+        delta_percent = ((today_usage - yesterday_usage) / yesterday_usage) * 100
+    else:
+        delta_percent = 0
+        
+    return {
+        "current_load": round(current_load, 3),
+        "today_usage": round(today_usage, 2),
+        "yesterday_usage": round(yesterday_usage, 2),
+        "delta_percent": round(delta_percent, 1),
+        "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
+    }
+
+# ==========================================
 # ⚡ 電費分析邏輯
 # ==========================================
 def analyze_pricing_plans(df):
@@ -105,7 +155,6 @@ def analyze_pricing_plans(df):
         return None
         
     df = df.copy()
-    # 確保有 hour 和 month 欄位
     if 'hour' not in df.columns:
         df['hour'] = df.index.hour
     if 'month' not in df.columns:
