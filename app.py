@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import time
 import pandas as pd
@@ -6,7 +7,7 @@ import traceback
 from streamlit_lottie import st_lottie
 
 # 匯入 UI 模組
-from app_utils import load_lottiefile
+from app_utils import load_lottiefile, load_data  # 新增 load_data
 from page_home import show_home_page
 from page_dashboard import show_dashboard_page
 from page_analysis import show_analysis_page
@@ -19,10 +20,9 @@ from model_service import load_resources_and_predict
 st.set_page_config(layout="wide", page_title="智慧電能管家", page_icon="⚡")
 
 # ==========================================
-# 🔍 系統健康檢查 (保留但不顯示給使用者，除非出錯)
+# 🔍 系統健康檢查
 # ==========================================
 def check_system_integrity():
-    # 只有在初始化階段檢查
     if not st.session_state.get("app_ready", False):
         try:
             files = os.listdir('.')
@@ -50,7 +50,7 @@ if "current_data" not in st.session_state:
     st.session_state.current_data = None
 
 # ==========================================
-# 資料載入核心 (同步模式 - 穩定優先)
+# 資料載入核心 (IO 優化版)
 # ==========================================
 def initialize_system():
     """
@@ -63,7 +63,6 @@ def initialize_system():
     check_system_integrity()
 
     # 2. 顯示載入畫面
-    # 這裡可以用 st.empty() 做一個佔位符，讓畫面乾淨點
     loading_placeholder = st.empty()
     
     with loading_placeholder.container():
@@ -71,22 +70,31 @@ def initialize_system():
         progress_bar = st.progress(0)
         
         try:
-            # 模擬進度 (讓使用者覺得有在動)
             progress_bar.progress(10)
             time.sleep(0.1)
             
-            # --- 核心載入 ---
-            pred_df, curr_df = load_resources_and_predict()
+            # --- [關鍵修改] 統一資料流 ---
+            # Step A: 先讀取歷史資料 (只讀一次)
+            df_history = load_data()
             
-            progress_bar.progress(80)
+            if df_history.empty:
+                st.error("❌ 無法讀取歷史數據，請檢查 CSV 檔案。")
+                st.stop()
+
+            progress_bar.progress(40)
+            
+            # Step B: 將資料傳給模型服務進行預測 (不需重複讀檔)
+            pred_df, curr_df = load_resources_and_predict(df_history)
+            
+            progress_bar.progress(90)
             
             if pred_df is None:
-                st.error("❌ 數據載入失敗，請稍後再試或聯繫管理員。")
+                st.error("❌ AI 預測失敗，請稍後再試。")
                 st.stop()
                 
             # 存入 Session
             st.session_state.prediction_result = pred_df
-            st.session_state.current_data = curr_df
+            st.session_state.current_data = curr_df # 這其實就是 df_history (或經過清洗的版本)
             st.session_state.app_ready = True
             
             progress_bar.progress(100)
@@ -98,7 +106,6 @@ def initialize_system():
             
         except Exception as e:
             st.error("❌ 系統發生預期外的錯誤")
-            # 在正式版中，可以使用 expander 把詳細錯誤藏起來，使用者才不會被嚇到
             with st.expander("查看錯誤詳情 (給開發人員)"):
                 st.code(traceback.format_exc())
             st.stop()
@@ -126,7 +133,6 @@ def main():
             st.rerun()
 
         st.markdown("---")
-        # 重新整理按鈕
         if st.button("🔄 更新即時數據"):
             st.session_state.app_ready = False
             st.rerun()
@@ -150,6 +156,5 @@ def main():
     else:
         show_home_page()
 
-# 程式執行入口
 if __name__ == "__main__":
     main()
