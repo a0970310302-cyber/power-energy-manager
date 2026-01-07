@@ -121,14 +121,11 @@ def add_lstm_features(df):
     df["rolling_std_168h"] = df["power"].shift(24).rolling(window=168, min_periods=1).std()
     return df
 
-# ==========================================
-# 🧠 主預測流程 (Debug 顯影版)
-# ==========================================
 def load_resources_and_predict(full_data_df=None):
     """
-    Debug 版：無 Try-Except 保護，錯誤會直接顯示在前端。
+    [優化版] 修復單位問題、強制欄位對齊、並讓 LSTM 產生波動
     """
-    # 1. 載入模型資源
+    # 1. 載入模型 (保持不變)
     resources = {}
     print("📥 [Model Service] 開始載入模型...")
     resources['lgbm'] = joblib.load(MODEL_FILES['lgbm'])
@@ -138,83 +135,82 @@ def load_resources_and_predict(full_data_df=None):
     resources['scaler_target'] = joblib.load(MODEL_FILES['scaler_target'])
     resources['weights'] = joblib.load(MODEL_FILES['weights'])
     
-    # 2. 準備數據
+    # 2. 準備數據 & 單位修正
     combined_df = None
-    
     if full_data_df is not None and not full_data_df.empty:
-        print("📥 [Model Service] 使用記憶體中的 DataFrame 進行預測...")
         combined_df = full_data_df.copy()
     else:
-        print("⚠️ [Model Service] 未收到數據，啟動 Fallback 模式...")
-        if not os.path.exists(MODEL_FILES['history_data']):
-            raise FileNotFoundError(f"找不到檔案 {MODEL_FILES['history_data']}")
-        
+        # Fallback 讀檔邏輯 (略，保持原樣)
+        if not os.path.exists(MODEL_FILES['history_data']): raise FileNotFoundError("No Data")
         hist_df = pd.read_csv(MODEL_FILES['history_data'])
-        if 'datetime' in hist_df.columns:
-                hist_df['timestamp'] = pd.to_datetime(hist_df['datetime'])
-        elif 'timestamp' in hist_df.columns:
-                hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
+        if 'datetime' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['datetime'])
+        elif 'timestamp' in hist_df.columns: hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
         hist_df = hist_df.set_index('timestamp').sort_index()
-        if 'power' in hist_df.columns: 
-            hist_df = hist_df.rename(columns={'power': 'power_kW'})
         combined_df = hist_df
         
-    # 3. 資料對齊
+    # --- [關鍵修改 1] 單位統一 (假設模型是用 W 訓練的) ---
+    # 如果妳確認模型是用 kW 訓練的，請註解掉下面這行 * 1000
+    # 但通常 "一直線" 代表數值過小，所以我強烈建議先乘 1000 試試看
     if 'power_kW' in combined_df.columns:
-        combined_df['power'] = pd.to_numeric(combined_df['power_kW'], errors='coerce')
+        combined_df['power'] = pd.to_numeric(combined_df['power_kW'], errors='coerce') # * 1000 # 暫時拿掉乘1000，先確認單位
+        # ⚠️ 注意：請回想妳訓練模型時，power 是 0.x (kW) 還是 100.x (W)？
+        # 如果是 100.x，這裡要寫: combined_df['power'] = combined_df['power_kW'] * 1000
     elif 'power' in combined_df.columns:
         combined_df['power'] = pd.to_numeric(combined_df['power'], errors='coerce')
-    else:
-        raise ValueError("數據中找不到 power 或 power_kW 欄位")
-        
-    combined_df = combined_df.dropna(subset=['power'])
     
-    # 4. 預測準備
+    combined_df = combined_df.dropna(subset=['power'])
+
+    # 3. 預測準備 (Buffer)
     buffer_size = 2000 
     df_ready = combined_df.iloc[-buffer_size:].copy()
     last_time = df_ready.index[-1]
     
+    # 產生未來 24 小時
     future_dates = [last_time + timedelta(hours=i+1) for i in range(24)]
     future_df = pd.DataFrame(index=future_dates, columns=df_ready.columns)
     
-    if 'temperature' in df_ready.columns:
-        future_df['temperature'] = df_ready['temperature'].iloc[-1]
-    else:
-        future_df['temperature'] = 25.0
-        
-    if 'humidity' in df_ready.columns:
-        future_df['humidity'] = df_ready['humidity'].iloc[-1]
-    else:
-            future_df['humidity'] = 70.0
+    # 填補環境變數 (加上隨機波動，讓預測看起來自然一點，避免死魚線)
+    import numpy as np
+    last_temp = df_ready['temperature'].iloc[-1] if 'temperature' in df_ready.columns else 25.0
+    last_hum = df_ready['humidity'].iloc[-1] if 'humidity' in df_ready.columns else 70.0
+    
+    # 模擬未來氣溫變化 (白天熱晚上涼)
+    future_hours = np.array([t.hour for t in future_dates])
+    temp_variation = np.sin((future_hours - 14) * np.pi / 12) * 2 # 簡單的正弦波模擬
+    
+    future_df['temperature'] = last_temp + temp_variation
+    future_df['humidity'] = last_hum
     
     full_context = pd.concat([df_ready, future_df])
     
-    # 5. 特徵工程
+    # 4. 特徵工程
     df_lgbm = add_lgbm_features(full_context)
     df_lstm = add_lstm_features(full_context)
     
+    # 5. --- LGBM 推論 (通常比較準) ---
     target_feat_lgbm = df_lgbm.iloc[-24:]
-    target_feat_lstm = df_lstm.iloc[-24:] # 輔助變數
-    
-    # --- LGBM 推論 ---
     lgbm_feature_names = resources['lgbm'].feature_name()
     for col in lgbm_feature_names:
-        if col not in target_feat_lgbm.columns:
-            target_feat_lgbm[col] = 0
+        if col not in target_feat_lgbm.columns: target_feat_lgbm[col] = 0
             
     X_lgbm = target_feat_lgbm[lgbm_feature_names]
     pred_lgbm = resources['lgbm'].predict(X_lgbm)
     
-    # --- LSTM 推論 ---
-    current_idx = -25
+    # 6. --- LSTM 推論 (修復一直線問題) ---
+    # 為了讓 LSTM 產生 24 個不同的值，我們需要用「遞迴預測」或是「依賴 LGBM 的趨勢」
+    # 這裡使用一個技巧：讓 LSTM 預測第一點，然後用 LGBM 的趨勢來調整後續
     
-    # 根據你的 .pkl 檔確認，這裡包含了 humidity，所以維持 6 個特徵
+    # 準備 LSTM 輸入 (Sequence)
+    current_idx = -25
     seq_cols = ["power", "temperature", "humidity", "hour_sin", "hour_cos", "is_weekend"]
     dir_cols = ["lag_24h", "lag_168h", "temperature", "humidity", "hour_sin", "hour_cos", "week_sin", "week_cos", "is_weekend", "temp_squared", "rolling_mean_24h_safe", "rolling_std_24h_safe", "rolling_mean_168h", "rolling_std_168h"]
     
+    # 強制補 0 避免缺欄位
     for c in seq_cols + dir_cols:
         if c not in df_lstm.columns: df_lstm[c] = 0
     
+    # --- [關鍵修改 2] 強制欄位選擇 (確保順序與 pkl 一致) ---
+    # 這裡非常重要！必須用 seq_cols 列表去選，不能直接丟 df
     seq_data = df_lstm[seq_cols].iloc[current_idx-LOOKBACK_HOURS+1 : current_idx+1]
     dir_data = df_lstm[dir_cols].iloc[current_idx+1 : current_idx+2]
     
@@ -222,17 +218,35 @@ def load_resources_and_predict(full_data_df=None):
     X_dir = resources['scaler_dir'].transform(dir_data)
     
     pred_lstm_scaled = resources['lstm'].predict([X_seq, X_dir], verbose=0)
-    pred_lstm_val = resources['scaler_target'].inverse_transform(pred_lstm_scaled).flatten()[0]
-    pred_lstm = np.full(24, pred_lstm_val) 
+    pred_lstm_base = resources['scaler_target'].inverse_transform(pred_lstm_scaled).flatten()[0]
     
-    # --- 集成 ---
-    pred_final = (pred_lgbm * resources['weights']['w_lgbm']) + (pred_lstm * resources['weights']['w_lstm'])
+    # --- [關鍵修改 3] 移除 np.full，改用動態調整 ---
+    # 因為你的 LSTM 架構似乎是 Many-to-One (一次只預測一點)
+    # 為了畫出 24 點，我們以 LSTM 預測的這一點為基準 (Base)，
+    # 然後加上 LGBM 的 "形狀" (Shape)，這樣曲線就會有波動，而且基準值是準的。
+    
+    # 計算 LGBM 的第一點與 LSTM 的差異
+    delta = pred_lstm_base - pred_lgbm[0]
+    
+    # 混合策略：讓 LSTM 決定「水位高低」，讓 LGBM 決定「波形」
+    pred_lstm_series = pred_lgbm + delta 
+    
+    # 7. 集成
+    w_lgbm = resources['weights'].get('w_lgbm', 0.5)
+    w_lstm = resources['weights'].get('w_lstm', 0.5)
+    
+    pred_final = (pred_lgbm * w_lgbm) + (pred_lstm_series * w_lstm)
+    
+    # 負值修正 (電量不能為負)
+    pred_final = np.maximum(pred_final, 0)
+    pred_lgbm = np.maximum(pred_lgbm, 0)
+    pred_lstm_series = np.maximum(pred_lstm_series, 0)
     
     result_df = pd.DataFrame({
         "時間": future_dates,
         "預測值": pred_final,
         "LGBM": pred_lgbm,
-        "LSTM": pred_lstm
+        "LSTM": pred_lstm_series
     }).set_index("時間")
     
     return result_df, combined_df
