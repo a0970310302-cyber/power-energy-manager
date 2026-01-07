@@ -122,7 +122,7 @@ def load_resources_and_predict(input_df=None):
             history_df = history_df.set_index('timestamp').sort_index()
 
         # -----------------------------------------------------------
-        # 🚑 [資料清洗區] - 解決對接問題的核心
+        # 🚑 [資料清洗區]
         # -----------------------------------------------------------
         
         # A. 欄位名稱映射 (UI: power_kW -> Model: power)
@@ -133,20 +133,16 @@ def load_resources_and_predict(input_df=None):
         required_cols = ['power', 'temperature', 'humidity']
         for col in required_cols:
             if col not in history_df.columns:
-                # 若缺溫濕度，給予預設值以免報錯
                 if col == 'temperature': history_df[col] = 25.0
                 elif col == 'humidity': history_df[col] = 70.0
                 else: raise ValueError(f"Missing column: {col}")
         
-        history_df = history_df[required_cols] # 只保留需要的欄位
+        history_df = history_df[required_cols]
 
         # B. 頻率重取樣 (Resampling) - 解決 15min 資料問題
-        # 強制轉為每小時一筆 (取平均)，並填補空缺
         history_df = history_df.resample('H').mean().ffill()
 
         # C. 數值縮放檢測 (Scaling Check) - 解決 x20 倍率問題
-        # 檢查邏輯：如果數據平均值很大 (例如 > 2.0)，很有可能是已經被 UI 放大過的
-        # 訓練資料通常在 0~1 之間 (原始 CSV)
         is_ui_scaled = False
         if history_df['power'].mean() > 2.0: 
             print("⚠️ Detected scaled input (UI scale). Reverting to model scale...")
@@ -156,22 +152,21 @@ def load_resources_and_predict(input_df=None):
         # -----------------------------------------------------------
         
         # 4. 預測迴圈準備
-        buffer_size = 500 # 取足夠長度以計算 Lag
+        buffer_size = 500
         current_df = history_df.iloc[-buffer_size:].copy()
         future_predictions = []
         last_timestamp = current_df.index[-1]
         
         print(f"⏱️ Predicting future from: {last_timestamp}")
 
-        # 模擬未來天氣 (使用最後一筆天氣延續，實際可接 API)
         last_temp = current_df['temperature'].iloc[-1]
         last_hum = current_df['humidity'].iloc[-1]
 
-        # 5. 逐小時預測未來 24 小時 (Autoregressive Loop)
+        # 5. 逐小時預測未來 24 小時
         for i in range(1, 25): 
             next_time = last_timestamp + timedelta(hours=i)
             
-            # --- 建立暫存 DataFrame (包含過去 + 現在要預測的那一小時) ---
+            # --- 建立暫存 DataFrame ---
             next_row = pd.DataFrame({
                 'temperature': [last_temp], 
                 'humidity': [last_hum],
@@ -181,52 +176,51 @@ def load_resources_and_predict(input_df=None):
             temp_df = pd.concat([current_df, next_row])
             
             # --- Step A: LSTM 預測 ---
-            # 計算特徵
             df_lstm_feat = add_engineering_features(temp_df)
             
-            # 準備輸入資料
             target_idx = -1
+            
+            # Sequence Input (過去 168 筆)
             seq_data = df_lstm_feat[lstm_seq_cols].iloc[target_idx-lookback_hours : target_idx].values
-            direct_data = df_lstm_feat[lstm_direct_cols].iloc[target_idx : target_idx+1].values
+            
+            # Direct Input (當下這一筆)
+            # 修正處：使用 [[target_idx]] 確保取出的是 2D DataFrame (1 row, N cols)
+            # 舊寫法 iloc[-1:0] 會變空值，這裡改用 [[-1]] 就能正確取出最後一列
+            direct_data = df_lstm_feat[lstm_direct_cols].iloc[[target_idx]].values
             
             if len(seq_data) < lookback_hours:
                 print("⚠️ Not enough history for LSTM lookback.")
                 break
 
-            # 正規化 (Transform)
+            # 正規化
             X_seq = scaler_seq.transform(seq_data).reshape(1, lookback_hours, -1)
             X_direct = scaler_direct.transform(direct_data)
             
             # 預測
             lstm_pred_scaled = lstm_model.predict([X_seq, X_direct], verbose=0).flatten()[0]
-            
-            # 反正規化 (還原成 Model Scale 的真實值)
             lstm_pred_real = scaler_target.inverse_transform([[lstm_pred_scaled]])[0][0]
             
             # --- Step B: LightGBM 殘差修正 ---
-            # 計算特徵 (包含 LightGBM 特有的 lag 特徵)
             df_lgbm_feat = add_strict_features(temp_df)
             current_lgbm_feat = df_lgbm_feat.iloc[[target_idx]].copy()
             
-            # 加入 LSTM 預測值作為特徵
             current_lgbm_feat['lstm_pred'] = lstm_pred_real
             
-            # 預測殘差
             X_lgbm = current_lgbm_feat[lgbm_feature_cols]
             lgbm_residual = lgbm_model.predict(X_lgbm)[0]
             
             # --- Step C: 最終融合 ---
             final_pred = lstm_pred_real + lgbm_residual
-            final_pred = max(0.0, final_pred) # 修正負值
+            final_pred = max(0.0, final_pred)
             
-            # 將預測結果填回 current_df (供下一輪預測使用)
+            # 將結果填回 current_df
             current_df = pd.concat([current_df, pd.DataFrame({
                 'temperature': [last_temp],
                 'humidity': [last_hum],
                 'power': [final_pred]
             }, index=[next_time])])
             
-            # 儲存結果 (如果是 UI 縮放過，這裡要乘回去以便 UI 顯示)
+            # 儲存結果 (若輸入被縮小過，輸出要放大回 UI 用的倍率)
             display_factor = DESIGN_PEAK_LOAD_KW if is_ui_scaled else 1.0
             
             future_predictions.append({
@@ -239,14 +233,11 @@ def load_resources_and_predict(input_df=None):
         # 6. 整理輸出
         result_df = pd.DataFrame(future_predictions).set_index("時間")
         
-        # 為了畫圖，回傳歷史資料 (也要乘回倍率)
         ui_history_df = history_df.copy()
         if is_ui_scaled:
             ui_history_df['power'] = ui_history_df['power'] * DESIGN_PEAK_LOAD_KW
             
-        # UI 預期欄位是 'power_kW'
         ui_history_df = ui_history_df.rename(columns={'power': 'power_kW'})
-        # 只回傳最後 72 小時給 UI 畫圖
         ui_history_df = ui_history_df.iloc[-72:][['power_kW']]
         
         print("✅ Prediction complete.")
@@ -257,7 +248,7 @@ def load_resources_and_predict(input_df=None):
         import traceback
         traceback.print_exc()
         return None, None
-
+    
 if __name__ == "__main__":
     # 測試用
     res, hist = load_resources_and_predict()
