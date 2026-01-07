@@ -5,18 +5,35 @@ import pandas as pd
 import numpy as np
 import os
 import re
+import json  # <--- 補上這個，讀取 Lottie 檔案需要
 
 # ==========================================
 # ⚙️ 設定 (離線模式)
 # ==========================================
-# 雖然離線模式下不連網，但保留變數定義避免其他模組引用報錯
 POWER_PANTRY_ID = "6a2e85f5-4af4-4efd-bb9f-c5604fe8475e"
 TARGET_YEARS = [2023, 2024, 2025, 2026]
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
+# ==========================================
+# 🎨 Lottie 動畫載入工具 (已修復)
+# ==========================================
+def load_lottiefile(filepath: str):
+    """
+    [補回] 載入本地 Lottie JSON 檔案
+    """
+    try:
+        with open(filepath, "r", encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"⚠️ 找不到 Lottie 檔案: {filepath}")
+        return None
+    except Exception as e:
+        print(f"⚠️ Lottie 載入錯誤: {e}")
+        return None
+
 def load_lottieurl(url: str):
     """
-    載入 Lottie 動畫 (如果 Lottie 伺服器正常則可運作，若失敗回傳 None)
+    載入網路 Lottie 動畫 URL
     """
     try:
         r = requests.get(url, timeout=3)
@@ -26,9 +43,12 @@ def load_lottieurl(url: str):
     except:
         return None
 
+# ==========================================
+# 📥 資料載入邏輯 (離線版)
+# ==========================================
 def load_data():
     """
-    [修改版] 離線模式：直接讀取本地 CSV 檔案，不進行網路請求
+    離線模式：直接讀取本地 CSV 檔案，不進行網路請求
     """
     print("📂 [App Utils] 正在讀取本地歷史資料 (離線模式)...")
     
@@ -40,7 +60,6 @@ def load_data():
         df = pd.read_csv(CSV_FILE_PATH)
         
         # --- 時間解析 ---
-        # 嘗試解析 CSV 常見的時間欄位名稱
         if 'datetime' in df.columns:
             df['timestamp'] = pd.to_datetime(df['datetime'], errors='coerce')
         elif 'timestamp' in df.columns:
@@ -53,22 +72,17 @@ def load_data():
         df = df.set_index('timestamp').sort_index()
         
         # --- 欄位名稱標準化 ---
-        # UI 介面通常預期欄位名稱為 'power_kW'，但 CSV 可能是 'power'
         if 'power' in df.columns:
             df = df.rename(columns={'power': 'power_kW'})
             
-        # 確保數據為數值型態
         if 'power_kW' in df.columns:
             df['power_kW'] = pd.to_numeric(df['power_kW'], errors='coerce')
         
-        # --- 簡單資料清洗 ---
-        # 處理標記為缺失的數據
+        # --- 資料清洗 ---
         if 'isMissingData' in df.columns:
-            # 將字串 '1' 或數值 1 視為缺失
             df.loc[df['isMissingData'] == 1, 'power_kW'] = np.nan
             df.loc[df['isMissingData'] == '1', 'power_kW'] = np.nan
             
-        # 補值 (與 model_service 保持一致)
         df['power_kW'] = df['power_kW'].ffill().bfill()
         
         if 'temperature' not in df.columns:
@@ -83,32 +97,27 @@ def load_data():
         print(f"❌ 讀取 CSV 時發生錯誤: {e}")
         return pd.DataFrame()
 
+# ==========================================
+# ⚡ 電費分析邏輯
+# ==========================================
 def analyze_pricing_plans(df):
-    """
-    電費分析邏輯 (保持不變)
-    """
     if df is None or df.empty:
         return None
         
     df = df.copy()
     # 確保有 hour 和 month 欄位
-    df['hour'] = df.index.hour
-    df['month'] = df.index.month
+    if 'hour' not in df.columns:
+        df['hour'] = df.index.hour
+    if 'month' not in df.columns:
+        df['month'] = df.index.month
     
-    # 費率設定 (台電 2024 參考費率)
-    
-    # 1. 累進費率 (以 330度, 500度, 700度 為級距簡化估算)
-    # 非夏月 (10月-5月) / 夏月 (6月-9月)
+    # 1. 累進費率估算
     def calculate_progressive_cost(row):
         is_summer = 6 <= row.name.month <= 9
-        # 這裡僅做單一小時的估算 (假設每小時都在最低級距，實際應以月總量計算，此為示意)
-        # 簡化：平均每度電 3.5 元 (非夏月) / 4.5 元 (夏月)
         rate = 4.5 if is_summer else 3.5
         return row['power_kW'] * rate
 
-    # 2. 時間電價 (兩段式)
-    # 尖峰：夏月 16:00-22:00, 非夏月 15:00-21:00 (簡化示意)
-    # 離峰：其他時間
+    # 2. 時間電價估算 (TOU)
     def calculate_tou_cost(row):
         month = row.name.month
         hour = row.name.hour
@@ -120,7 +129,6 @@ def analyze_pricing_plans(df):
         else:
             if 15 <= hour < 21: is_peak = True
             
-        # 費率 (參考)
         peak_rate = 6.0 if is_summer else 5.0
         off_peak_rate = 1.8 if is_summer else 1.7
         
