@@ -126,26 +126,38 @@ def find_data_list(data_dict):
     return None, None
 
 def process_raw_data_to_df(target_list, date_context):
+    """
+    處理原始資料列表轉換為 DataFrame，並加入時間過濾防止未來資料污染
+    """
     if not target_list:
         return pd.DataFrame()
 
     df = pd.DataFrame(target_list)
     
+    # 欄位重新命名
     if 'power' in df.columns:
         df = df.rename(columns={'power': 'power_kW'})
     
+    # --- 時間組合邏輯 ---
     try:
         if 'full_timestamp' in df.columns:
+            # 優先使用完整的 timestamp 欄位
             df['timestamp'] = pd.to_datetime(df['full_timestamp'], errors='coerce')
+            
         elif 'date' in df.columns and 'time' in df.columns:
+            # 如果資料裡自帶 date 欄位，就用它
             df['timestamp'] = pd.to_datetime(df['date'].astype(str) + " " + df['time'].astype(str), errors='coerce')
+            
         elif 'time' in df.columns:
             if date_context:
+                # 如果有外層包裹的日期 Key，就用它
                 df['timestamp'] = pd.to_datetime(f"{date_context} " + df['time'], errors='coerce')
             else:
+                # 僅有時間，嘗試解析
                 df['timestamp'] = pd.to_datetime(df['time'], errors='coerce')
+                
         else:
-            return pd.DataFrame() 
+            return pd.DataFrame() # 沒時間資訊，無法處理
             
     except Exception as e:
         print(f"⚠️ 時間解析失敗: {e}")
@@ -156,14 +168,27 @@ def process_raw_data_to_df(target_list, date_context):
 
     df = df.dropna(subset=['timestamp'])
     df = df.set_index('timestamp').sort_index()
+    
+    # =========== 🔥 核心修正：過濾掉未來的時間 ===========
+    # 取得系統現在時間
+    now = datetime.now()
+    
+    # 強制只保留「現在時間之前」的資料
+    # 這行程式碼會把 10:49 之後 (如 11:00, 12:00... 23:45) 的 0 或無效值直接切掉
+    df = df[df.index <= now]
+    # ======================================================
+
     df['power_kW'] = pd.to_numeric(df['power_kW'], errors='coerce')
     
+    # --- 資料清洗 ---
     if 'isMissingData' in df.columns:
         df.loc[df['isMissingData'] == 1, 'power_kW'] = np.nan
         df.loc[df['isMissingData'] == '1', 'power_kW'] = np.nan
     
     df['power_kW'] = df['power_kW'].replace(0, np.nan)
     df['power_kW'] = df['power_kW'].replace(0.0, np.nan)
+    
+    # 這裡的 ffill 會填補中間的空洞，但因為未來資料已被切除，所以不會無限延伸
     df['power_kW'] = df['power_kW'].ffill().bfill()
     
     if 'temperature' not in df.columns:
