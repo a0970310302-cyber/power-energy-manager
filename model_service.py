@@ -21,7 +21,7 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ==========================================
 # ⚙️ 設定與常數
 # ==========================================
-# [關鍵參數] 用於還原/放大數據
+# [關鍵參數] 用於還原/放大數據，必須與 app_utils 一致
 DESIGN_PEAK_LOAD_KW = 20.0 
 
 MODEL_FILES = {
@@ -116,7 +116,7 @@ def add_lstm_features(df):
 # ==========================================
 # 🧠 主預測流程
 # ==========================================
-# [修復點] 這裡加上了 full_data_df 參數，解決 TypeError
+# [修復] 這裡一定要加上 full_data_df 參數，否則 app.py 傳資料進來會報錯
 def load_resources_and_predict(full_data_df=None):
     resources = {}
     try:
@@ -130,17 +130,15 @@ def load_resources_and_predict(full_data_df=None):
         
         # 2. 準備數據
         combined_df = None
-        
-        # [邏輯] 判斷資料來源並處理縮放
         is_scaled_input = False
         
+        # 判斷是否有從 app.py 傳入資料
         if full_data_df is not None and not full_data_df.empty:
             print("📥 [Model Service] 使用記憶體中的 DataFrame 進行預測...")
             combined_df = full_data_df.copy()
-            # 檢查是否已經被 app_utils 放大過
+            # 檢查輸入的數據是否已經被放大過 (Max > 1.0)
             if combined_df['power_kW'].max() > 1.0:
                 is_scaled_input = True
-                print(f"ℹ️ [Model Service] 輸入數據已縮放 (Max > 1.0)，準備進行預測前還原...")
         else:
             print("⚠️ [Model Service] 未收到數據，啟動 Fallback 讀檔模式...")
             if not os.path.exists(MODEL_FILES['history_data']):
@@ -152,10 +150,10 @@ def load_resources_and_predict(full_data_df=None):
             if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
             combined_df = hist_df
         
-        # 建立預測用的 DataFrame (df_for_model)，模型需要原始小數值 (0.x)
+        # 建立預測用的 DataFrame (df_for_model)，模型需要吃「原始小數值 (0.x)」
         df_for_model = combined_df.copy()
         
-        # 如果輸入是大的 (20.0)，為了給模型吃，要除以倍率
+        # 如果輸入是大的 (20.0)，為了給模型預測，要先「還原」回小數值
         if is_scaled_input:
             df_for_model['power'] = df_for_model['power_kW'] / DESIGN_PEAK_LOAD_KW
         else:
@@ -206,14 +204,14 @@ def load_resources_and_predict(full_data_df=None):
         pred_lstm_scaled = resources['lstm'].predict([X_seq, X_dir], verbose=0)
         pred_lstm = resources['scaler_target'].inverse_transform(pred_lstm_scaled).flatten()
         
-        # --- 集成 (這是原始預測值 0.x) ---
+        # --- 集成 (得出原始預測值 0.x) ---
         pred_final = (pred_lgbm * resources['weights']['w_lgbm']) + (pred_lstm * resources['weights']['w_lstm'])
         pred_final = np.maximum(pred_final, 0)
 
         # ==========================================
         # 🚀 輸出統一放大 (Reality Booster)
         # ==========================================
-        # 為了讓 UI 圖表接合，我們必須回傳「大數值」
+        # 為了讓 UI 圖表接合，回傳前必須把預測值和歷史資料都「放大」到 20.0 的等級
         scale_factor = DESIGN_PEAK_LOAD_KW
             
         # 1. 放大預測值
@@ -221,9 +219,10 @@ def load_resources_and_predict(full_data_df=None):
         pred_lgbm_scaled = pred_lgbm * scale_factor
         pred_lstm_scaled = pred_lstm * scale_factor
         
-        # 2. 準備回傳的歷史資料 (確保也是大的)
+        # 2. 準備回傳的歷史資料
+        # 我們必須確保回傳給 UI 畫圖的歷史資料也是「放大版」的
         ui_history_df = combined_df.copy()
-        # 如果原本輸入就是大的，維持原樣；如果原本是讀檔(小的)，把它變大
+        # 如果原本輸入的是小數值(Fallback模式)，這裡要乘倍率；如果原本就是大數值，則不變
         if not is_scaled_input:
              ui_history_df['power_kW'] = ui_history_df['power_kW'] * scale_factor
         

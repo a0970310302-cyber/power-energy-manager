@@ -7,7 +7,7 @@ import traceback
 from streamlit_lottie import st_lottie
 
 # 匯入 UI 模組
-from app_utils import load_lottiefile, load_data  # 新增 load_data
+from app_utils import load_lottiefile, load_data  # 確保有匯入 load_data
 from page_home import show_home_page
 from page_dashboard import show_dashboard_page
 from page_analysis import show_analysis_page
@@ -50,7 +50,7 @@ if "current_data" not in st.session_state:
     st.session_state.current_data = None
 
 # ==========================================
-# 資料載入核心 (IO 優化版)
+# 資料載入核心 (同步模式)
 # ==========================================
 def initialize_system():
     """
@@ -73,17 +73,18 @@ def initialize_system():
             progress_bar.progress(10)
             time.sleep(0.1)
             
-            # --- [關鍵修改] 統一資料流 ---
-            # Step A: 先讀取歷史資料 (只讀一次)
+            # --- 1. 先讀取歷史資料 ---
+            # 這裡讀到的資料已經被 app_utils 放大過 (x20)
             df_history = load_data()
             
-            if df_history.empty:
-                st.error("❌ 無法讀取歷史數據，請檢查 CSV 檔案。")
+            if df_history is None or df_history.empty:
+                st.error("❌ 無法讀取歷史數據，請檢查資料來源。")
                 st.stop()
 
             progress_bar.progress(40)
             
-            # Step B: 將資料傳給模型服務進行預測 (不需重複讀檔)
+            # --- 2. 將資料傳給模型服務 ---
+            # 這裡將 df_history 傳入，model_service 會自動偵測並縮小數值進行預測，最後再放大回傳
             pred_df, curr_df = load_resources_and_predict(df_history)
             
             progress_bar.progress(90)
@@ -94,7 +95,7 @@ def initialize_system():
                 
             # 存入 Session
             st.session_state.prediction_result = pred_df
-            st.session_state.current_data = curr_df # 這其實就是 df_history (或經過清洗的版本)
+            st.session_state.current_data = curr_df
             st.session_state.app_ready = True
             
             progress_bar.progress(100)
@@ -133,6 +134,7 @@ def main():
             st.rerun()
 
         st.markdown("---")
+        # 重新整理按鈕
         if st.button("🔄 更新即時數據"):
             st.session_state.app_ready = False
             st.rerun()
