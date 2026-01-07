@@ -5,7 +5,8 @@ import joblib
 import os
 import warnings
 import tensorflow as tf
-from datetime import timedelta
+from datetime import timedelta, datetime
+import calendar
 
 # ==========================================
 # 🚑 [設定] 抑制警告與環境設定
@@ -17,7 +18,7 @@ warnings.filterwarnings("ignore")
 # ==========================================
 # ⚙️ 設定常數
 # ==========================================
-# [修正 1] 從 4.0 下修至 3.6，讓預測金額從 $844 降至接近 $751
+# [修正] 同步設定為 3.6
 DESIGN_PEAK_LOAD_KW = 3.6 
 
 MODEL_FILES = {
@@ -26,6 +27,34 @@ MODEL_FILES = {
     "lstm": "lstm_hybrid.keras",        
     "history_data": "final_training_data_with_humidity.csv"
 }
+
+# ==========================================
+# 🌤️ 天氣模擬器 (解決未來天氣未知的問題)
+# ==========================================
+class WeatherSimulator:
+    def __init__(self, history_df):
+        # 建立一個快速查詢表：(Month, Day, Hour) -> (Avg Temp, Avg Hum)
+        self.lookup = {}
+        temp_df = history_df.copy()
+        temp_df['month'] = temp_df.index.month
+        temp_df['day'] = temp_df.index.day
+        temp_df['hour'] = temp_df.index.hour
+        
+        # 計算歷史平均值作為未來的期望值
+        stats = temp_df.groupby(['month', 'day', 'hour'])[['temperature', 'humidity']].mean()
+        self.lookup = stats.to_dict('index')
+        
+        # 備用：全域平均
+        self.fallback_temp = temp_df['temperature'].mean()
+        self.fallback_hum = temp_df['humidity'].mean()
+
+    def get_forecast(self, target_time):
+        key = (target_time.month, target_time.day, target_time.hour)
+        if key in self.lookup:
+            data = self.lookup[key]
+            return data['temperature'], data['humidity']
+        else:
+            return self.fallback_temp, self.fallback_hum
 
 # ==========================================
 # 🛠️ 特徵工程
@@ -56,10 +85,10 @@ def add_engineering_features(df):
     return df
 
 # ==========================================
-# 🧠 核心預測邏輯
+# 🧠 核心預測邏輯 (長程馬拉松版)
 # ==========================================
 def load_resources_and_predict(input_df=None):
-    print("🚀 Starting Hybrid Prediction Service...")
+    print("🚀 Starting Hybrid Prediction Service (Full Cycle Mode)...")
     
     missing_files = [f for n, f in MODEL_FILES.items() if not os.path.exists(f)]
     if missing_files:
@@ -110,34 +139,51 @@ def load_resources_and_predict(input_df=None):
         history_df = history_df[required_cols]
         history_df = history_df.resample('H').mean().ffill()
 
-        # [修正 2] 調整偵測門檻：從 2.0 降至 0.2
-        # 一般家庭平均負載約 0.3~0.6 kW，設 2.0 會偵測失敗
+        # 縮放檢測 (0.2 門檻)
         is_ui_scaled = False
         if history_df['power'].mean() > 0.2: 
             print("⚠️ Detected scaled input (UI scale). Reverting to model scale...")
             history_df['power'] = history_df['power'] / DESIGN_PEAK_LOAD_KW
             is_ui_scaled = True
         
-        # -----------------------------------------------------------
+        # 初始化天氣模擬器
+        weather_sim = WeatherSimulator(history_df)
         
-        # 4. 預測迴圈準備
+        # -----------------------------------------------------------
+        # 🏃 [預測規劃] 計算還需要跑多遠 (到本期帳單結束)
+        # -----------------------------------------------------------
+        last_timestamp = history_df.index[-1]
+        
+        # 簡單計算帳單週期結束日 (複製 app_utils 邏輯以免循環引用)
+        curr_mon = last_timestamp.month
+        start_mon = curr_mon if curr_mon % 2 != 0 else curr_mon - 1
+        end_mon = start_mon + 1
+        last_day = calendar.monthrange(last_timestamp.year, end_mon)[1]
+        cycle_end_date = datetime(last_timestamp.year, end_mon, last_day, 23, 0, 0)
+        
+        # 計算剩餘小時數
+        hours_to_predict = int((cycle_end_date - last_timestamp).total_seconds() / 3600)
+        if hours_to_predict <= 0:
+            # 如果已經是最後一天，預測未來 24 小時即可
+            hours_to_predict = 24
+            
+        print(f"⏱️ Predicting from {last_timestamp} to {cycle_end_date} ({hours_to_predict} hours)")
+
+        # 4. 預測迴圈
         buffer_size = 500
         current_df = history_df.iloc[-buffer_size:].copy()
         future_predictions = []
-        last_timestamp = current_df.index[-1]
         
-        print(f"⏱️ Predicting future from: {last_timestamp}")
-
-        last_temp = current_df['temperature'].iloc[-1]
-        last_hum = current_df['humidity'].iloc[-1]
-
-        # 5. 逐小時預測
-        for i in range(1, 25): 
+        # 為了效能，每 24 小時印一次進度
+        for i in range(1, hours_to_predict + 1): 
             next_time = last_timestamp + timedelta(hours=i)
             
+            # --- 模擬未來天氣 ---
+            sim_temp, sim_hum = weather_sim.get_forecast(next_time)
+            
             next_row = pd.DataFrame({
-                'temperature': [last_temp], 
-                'humidity': [last_hum],
+                'temperature': [sim_temp], 
+                'humidity': [sim_hum],
                 'power': [np.nan] 
             }, index=[next_time])
             
@@ -151,7 +197,6 @@ def load_resources_and_predict(input_df=None):
             direct_data = df_lstm_feat[lstm_direct_cols].iloc[[target_idx]].values
             
             if len(seq_data) < lookback_hours:
-                print("⚠️ Not enough history for LSTM lookback.")
                 break
 
             X_seq = scaler_seq.transform(seq_data).reshape(1, lookback_hours, -1)
@@ -178,12 +223,11 @@ def load_resources_and_predict(input_df=None):
             final_pred = max(0.0, final_pred)
             
             current_df = pd.concat([current_df, pd.DataFrame({
-                'temperature': [last_temp],
-                'humidity': [last_hum],
+                'temperature': [sim_temp],
+                'humidity': [sim_hum],
                 'power': [final_pred]
             }, index=[next_time])])
             
-            # 確保正確放大 (如果檢測到縮小過，或是原本就是模型尺度)
             display_factor = DESIGN_PEAK_LOAD_KW
             
             future_predictions.append({
@@ -192,21 +236,21 @@ def load_resources_and_predict(input_df=None):
                 "LSTM基礎": lstm_pred_real * display_factor,
                 "殘差修正": lgbm_residual * display_factor
             })
+            
+            if i % 48 == 0:
+                print(f"   ... Progress: {i}/{hours_to_predict} hours predicted")
 
         # 6. 整理輸出
         result_df = pd.DataFrame(future_predictions).set_index("時間")
         
-        # 回傳完整歷史資料
         ui_history_df = history_df.copy()
-        
-        # 如果剛才為了預測縮小過，現在要放大回 UI 顯示用
-        # 或者如果剛剛沒縮小(代表它是原始檔)，也要放大給 UI 看
         ui_history_df['power'] = ui_history_df['power'] * DESIGN_PEAK_LOAD_KW
-            
         ui_history_df = ui_history_df.rename(columns={'power': 'power_kW'})
         ui_history_df = ui_history_df[['power_kW']]
         
-        print(f"✅ Prediction complete. Returning {len(ui_history_df)} history records.")
+        # 回傳合併後的完整數據 (歷史 + 預測)，方便前端切割
+        # 但為了相容性，我們還是分開回傳
+        print(f"✅ Prediction complete. Generated {len(result_df)} future points.")
         return result_df, ui_history_df
 
     except Exception as e:

@@ -7,21 +7,54 @@ import os
 import json
 import joblib
 from datetime import datetime, timedelta
+import calendar
 
 # ==========================================
 # ⚙️ 全域設定與常數
 # ==========================================
-DESIGN_PEAK_LOAD_KW = 3.6  # 系統設計的最大負載 (千瓦) 
+# [修正] 根據真實帳單校正後的倍率
+DESIGN_PEAK_LOAD_KW = 3.6
 
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
 
-# [關鍵修改] 更新為新版混合模型的檔案路徑
 MODEL_FILES = {
     "config": "hybrid_residual.pkl",    # 總指揮官 (含 Scalers)
     "lgbm": "lgbm_residual.pkl",        # 殘差修正模型
     "lstm": "lstm_hybrid.keras",        # 序列預測模型
     "history_data": "final_training_data_with_humidity.csv"
 }
+
+# ==========================================
+# 📅 帳單週期計算 (新增核心功能)
+# ==========================================
+def get_current_bill_cycle(current_date=None):
+    """
+    計算當前日期所屬的台電帳單週期 (雙月一期)
+    週期定義：1-2月, 3-4月, 5-6月, 7-8月, 9-10月, 11-12月
+    回傳：(開始日期, 結束日期)
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    year = current_date.year
+    month = current_date.month
+    
+    # 判斷起始月份 (奇數月為起始，偶數月則減1找起始)
+    if month % 2 == 1:
+        start_month = month
+    else:
+        start_month = month - 1
+        
+    end_month = start_month + 1
+    
+    # 建立日期物件
+    start_date = datetime(year, start_month, 1)
+    
+    # 計算結束日期 (該月最後一天)
+    last_day = calendar.monthrange(year, end_month)[1]
+    end_date = datetime(year, end_month, last_day, 23, 59, 59)
+    
+    return start_date, end_date
 
 # ==========================================
 # 📅 歷史費率資料庫 (Rate History DB)
@@ -93,7 +126,8 @@ def load_data():
         if 'power_kW' in df.columns: df['power_kW'] = pd.to_numeric(df['power_kW'], errors='coerce')
         
         # [Reality Booster] 放大倍率
-        if df['power_kW'].max() < 1.0:
+        # 修正邏輯：如果數值非常小 (例如 < 0.2)，才進行放大，避免誤判
+        if df['power_kW'].mean() < 0.2:
             df['power_kW'] = df['power_kW'] * DESIGN_PEAK_LOAD_KW
             
         df['power_kW'] = df['power_kW'].ffill().bfill()
@@ -112,7 +146,6 @@ def load_lottiefile(filepath):
 # 🧠 模型載入工具
 # ==========================================
 def load_model(path=None):
-    # 預設載入 config (因為現在它是核心)
     if path is None: path = MODEL_FILES.get("config", "hybrid_residual.pkl")
     try:
         if not os.path.exists(path): return None
@@ -193,36 +226,47 @@ def get_billing_report(df, budget=3000):
     if df is None or df.empty: return default
     
     latest_time = df.index[-1]
-    month_start = latest_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    df_period = df[df.index >= month_start]
+    
+    # [修正] 使用 get_current_bill_cycle 鎖定真實雙月週期
+    cycle_start, cycle_end = get_current_bill_cycle(latest_time)
+    
+    # 篩選出本期資料 (包含歷史 + 預測)
+    df_period = df[(df.index >= cycle_start) & (df.index <= cycle_end)]
     
     if df_period.empty: return default
     
     res, _ = analyze_pricing_plans(df_period)
-    current_bill = res['cost_progressive']
-    current_tou = res['cost_tou']
+    total_bill_projected = res['cost_progressive'] # 這已經包含預測到月底的量
+    total_tou_projected = res['cost_tou']
     
-    progress = max(latest_time.day / 30, 0.05)
-    pred_bill = current_bill / progress
+    # 計算目前已發生的費用 (只算到今天)
+    df_actual = df_period[df_period.index <= datetime.now()]
+    if not df_actual.empty:
+        res_actual, _ = analyze_pricing_plans(df_actual)
+        current_bill = res_actual['cost_progressive']
+    else:
+        current_bill = 0
+
+    pred_bill = int(total_bill_projected)
+    savings = pred_bill - int(total_tou_projected)
     
-    savings = pred_bill - (current_tou / progress)
     status = "safe"
     if pred_bill > budget: status = "danger"
     elif pred_bill > budget * 0.9: status = "warning"
     
     recommendation = ""
-    if savings > 150: recommendation = f"建議切換時間電價，本月預計可省 ${int(savings):,} 元"
+    if savings > 150: recommendation = f"建議切換時間電價，本期預計可省 ${int(savings):,} 元"
     elif savings < -100: recommendation = f"累進費率目前最優，切換反而貴 ${int(abs(savings)):,} 元"
     else: recommendation = "目前方案合適"
 
     return {
-        "period": f"{month_start.strftime('%Y-%m-%d')} ~ {latest_time.strftime('%Y-%m-%d')}",
+        "period": f"{cycle_start.strftime('%Y-%m-%d')} ~ {cycle_end.strftime('%Y-%m-%d')}",
         "current_bill": int(current_bill),
         "predicted_bill": int(pred_bill),
-        "potential_tou_bill": int(current_tou),
+        "potential_tou_bill": int(total_tou_projected),
         "budget": budget,
         "status": status,
-        "usage_percent": min(pred_bill/budget, 1.0),
+        "usage_percent": min(pred_bill/budget, 1.0) if budget > 0 else 0,
         "savings": int(savings),
         "recommendation_msg": recommendation
     }
@@ -254,7 +298,8 @@ def get_core_kpis(df):
         usage_prev_7d = df[(df.index > fourteen_days_ago) & (df.index <= seven_days_ago)]['power_kW'].sum() * time_factor
         
         weekly_delta = 0
-        if usage_prev_7d > 0: weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
+        if usage_prev_7d > 0.1: # 避免除以零或過小數值
+            weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
 
         return {
             "status_data_available": True,
