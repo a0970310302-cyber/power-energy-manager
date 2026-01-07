@@ -24,23 +24,12 @@ MODEL_FILES = {
     "history_data": "final_training_data_with_humidity.csv"
 }
 
-# ==========================================
-# 📅 帳單週期計算 (新增核心功能)
-# ==========================================
-# app_utils.py 中的 get_current_bill_cycle 函式
+# app_utils.py
 
 def get_current_bill_cycle(current_date=None):
     """
     計算當前日期所屬的帳單週期 (奇數月結算制)
-    週期定義：
-    - 12月~1月 (跨年週期)
-    - 2月~3月
-    - 4月~5月
-    - 6月~7月
-    - 8月~9月
-    - 10月~11月
-    
-    這樣若現在是 1 月，週期會是 12/1 ~ 1/31，剛好一半歷史一半預測。
+    修正版：解決 12月 跨年導致月份 13 的錯誤
     """
     if current_date is None:
         current_date = datetime.now()
@@ -48,31 +37,34 @@ def get_current_bill_cycle(current_date=None):
     year = current_date.year
     month = current_date.month
     
-    # 判斷起始月份
-    # 邏輯：偶數月是起始，奇數月是結束 (除了跨年的 1月)
+    # 判斷邏輯：
+    # 1月 -> 屬於 "去年12月 ~ 今年1月"
+    # 12月 -> 屬於 "今年12月 ~ 明年1月" (偶數月起始)
+    # 其他偶數月 (2,4,6...) -> 屬於 "該月 ~ 下個月"
+    # 其他奇數月 (3,5,7...) -> 屬於 "上個月 ~ 該月"
+    
     if month == 1:
-        # 特殊情況：1月屬於 "去年12月~今年1月"
         start_year = year - 1
         start_month = 12
         end_year = year
         end_month = 1
+    elif month == 12:
+        start_year = year
+        start_month = 12
+        end_year = year + 1  # 跨年
+        end_month = 1
     elif month % 2 == 0:
-        # 偶數月 (2, 4, 6...) 是週期的第一個月
         start_year = year
         start_month = month
         end_year = year
         end_month = month + 1
     else:
-        # 奇數月 (3, 5, 7...) 是週期的第二個月 -> 起始月是上個月
         start_year = year
         start_month = month - 1
         end_year = year
         end_month = month
         
-    # 建立日期物件
     start_date = datetime(start_year, start_month, 1)
-    
-    # 計算結束日期 (該月最後一天)
     last_day = calendar.monthrange(end_year, end_month)[1]
     end_date = datetime(end_year, end_month, last_day, 23, 59, 59)
     

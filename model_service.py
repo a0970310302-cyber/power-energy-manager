@@ -149,35 +149,28 @@ def load_resources_and_predict(input_df=None):
         # 初始化天氣模擬器
         weather_sim = WeatherSimulator(history_df)
         
-        # -----------------------------------------------------------
-        # 🏃 [預測規劃] 計算還需要跑多遠 (奇數月結算制)
-        # -----------------------------------------------------------
         last_timestamp = history_df.index[-1]
         curr_year = last_timestamp.year
         curr_mon = last_timestamp.month
         
-        # [核心修正] 判斷結算日 (Target Date)
-        # 週期邏輯：12-1, 2-3, 4-5, 6-7, 8-9, 10-11
+        # 判斷結算日 (Target Date)
         if curr_mon == 1:
-            # 1月屬於 "去年12月~今年1月" -> 結束日是今年1月底
+            # 1月 -> 結束日是今年 1月底
             end_year = curr_year
             end_mon = 1
         elif curr_mon == 12:
-            # 12月屬於 "今年12月~明年1月" -> 結束日是明年1月底
+            # 12月 -> 結束日是明年 1月底
             end_year = curr_year + 1
             end_mon = 1
+        elif curr_mon % 2 == 0:
+            # 偶數月 (2,4...) -> 結束日是下個月底
+            end_year = curr_year
+            end_mon = curr_mon + 1
         else:
-            # 其他月份
-            if curr_mon % 2 == 0:
-                # 偶數月 (2, 4...) 是週期的開始 -> 結束日是下個月
-                end_year = curr_year
-                end_mon = curr_mon + 1
-            else:
-                # 奇數月 (3, 5...) 是週期的結束 -> 結束日是這個月
-                end_year = curr_year
-                end_mon = curr_mon
-        
-        # 取得該月最後一天
+            # 奇數月 (3,5...) -> 結束日是這個月底
+            end_year = curr_year
+            end_mon = curr_mon
+            
         last_day = calendar.monthrange(end_year, end_mon)[1]
         cycle_end_date = datetime(end_year, end_mon, last_day, 23, 0, 0)
         
