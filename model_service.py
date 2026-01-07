@@ -81,7 +81,7 @@ def add_engineering_features(df):
 def load_resources_and_predict(input_df=None):
     """
     載入模型並執行未來 24 小時的預測
-    包含：資料清洗、頻率重取樣(Resampling)、數值還原、Autoregressive 預測
+    包含：資料清洗、頻率重取樣、數值還原、特徵對齊(15 features)、Autoregressive 預測
     """
     print("🚀 Starting Hybrid Prediction Service...")
     
@@ -104,8 +104,8 @@ def load_resources_and_predict(input_df=None):
         
         lstm_seq_cols = config['lstm_seq_cols']
         lstm_direct_cols = config['lstm_direct_cols']
-        lgbm_feature_cols = config['lgbm_feature_cols']
-        lookback_hours = config['lookback_hours'] # 通常是 168
+        lgbm_feature_cols = config['lgbm_feature_cols'] # 這是訓練時的基礎特徵 (14個)
+        lookback_hours = config['lookback_hours']
 
         print("✅ Models and Config loaded successfully.")
 
@@ -113,7 +113,6 @@ def load_resources_and_predict(input_df=None):
         if input_df is not None and not input_df.empty:
             history_df = input_df.copy()
         else:
-            # 若無外部輸入，讀取預設 CSV
             history_df = pd.read_csv(MODEL_FILES['history_data'])
             if 'datetime' in history_df.columns:
                 history_df['timestamp'] = pd.to_datetime(history_df['datetime'])
@@ -124,12 +123,9 @@ def load_resources_and_predict(input_df=None):
         # -----------------------------------------------------------
         # 🚑 [資料清洗區]
         # -----------------------------------------------------------
-        
-        # A. 欄位名稱映射 (UI: power_kW -> Model: power)
         if 'power_kW' in history_df.columns:
             history_df = history_df.rename(columns={'power_kW': 'power'})
         
-        # 確保必要欄位存在
         required_cols = ['power', 'temperature', 'humidity']
         for col in required_cols:
             if col not in history_df.columns:
@@ -138,11 +134,8 @@ def load_resources_and_predict(input_df=None):
                 else: raise ValueError(f"Missing column: {col}")
         
         history_df = history_df[required_cols]
-
-        # B. 頻率重取樣 (Resampling) - 解決 15min 資料問題
         history_df = history_df.resample('H').mean().ffill()
 
-        # C. 數值縮放檢測 (Scaling Check) - 解決 x20 倍率問題
         is_ui_scaled = False
         if history_df['power'].mean() > 2.0: 
             print("⚠️ Detected scaled input (UI scale). Reverting to model scale...")
@@ -170,33 +163,26 @@ def load_resources_and_predict(input_df=None):
             next_row = pd.DataFrame({
                 'temperature': [last_temp], 
                 'humidity': [last_hum],
-                'power': [np.nan] # 待預測
+                'power': [np.nan] 
             }, index=[next_time])
             
             temp_df = pd.concat([current_df, next_row])
             
             # --- Step A: LSTM 預測 ---
             df_lstm_feat = add_engineering_features(temp_df)
-            
             target_idx = -1
             
-            # Sequence Input (過去 168 筆)
             seq_data = df_lstm_feat[lstm_seq_cols].iloc[target_idx-lookback_hours : target_idx].values
-            
-            # Direct Input (當下這一筆)
-            # 修正處：使用 [[target_idx]] 確保取出的是 2D DataFrame (1 row, N cols)
-            # 舊寫法 iloc[-1:0] 會變空值，這裡改用 [[-1]] 就能正確取出最後一列
+            # 修正：使用 [[target_idx]] 取出 2D array
             direct_data = df_lstm_feat[lstm_direct_cols].iloc[[target_idx]].values
             
             if len(seq_data) < lookback_hours:
                 print("⚠️ Not enough history for LSTM lookback.")
                 break
 
-            # 正規化
             X_seq = scaler_seq.transform(seq_data).reshape(1, lookback_hours, -1)
             X_direct = scaler_direct.transform(direct_data)
             
-            # 預測
             lstm_pred_scaled = lstm_model.predict([X_seq, X_direct], verbose=0).flatten()[0]
             lstm_pred_real = scaler_target.inverse_transform([[lstm_pred_scaled]])[0][0]
             
@@ -204,9 +190,19 @@ def load_resources_and_predict(input_df=None):
             df_lgbm_feat = add_strict_features(temp_df)
             current_lgbm_feat = df_lgbm_feat.iloc[[target_idx]].copy()
             
+            # 關鍵修正：將 'lstm_pred' 加入特徵
             current_lgbm_feat['lstm_pred'] = lstm_pred_real
             
-            X_lgbm = current_lgbm_feat[lgbm_feature_cols]
+            # 關鍵修正：確保特徵列表包含 'lstm_pred' 且順序正確 (共 15 個)
+            # 因為 lgbm_feature_cols 是從 pkl 讀來的，通常只包含原始 14 個特徵
+            # 我們需要動態加入 'lstm_pred'
+            final_feature_cols = list(lgbm_feature_cols)
+            if 'lstm_pred' not in final_feature_cols:
+                final_feature_cols.append('lstm_pred')
+            
+            # 確保欄位存在且順序正確
+            X_lgbm = current_lgbm_feat[final_feature_cols]
+            
             lgbm_residual = lgbm_model.predict(X_lgbm)[0]
             
             # --- Step C: 最終融合 ---
@@ -220,7 +216,6 @@ def load_resources_and_predict(input_df=None):
                 'power': [final_pred]
             }, index=[next_time])])
             
-            # 儲存結果 (若輸入被縮小過，輸出要放大回 UI 用的倍率)
             display_factor = DESIGN_PEAK_LOAD_KW if is_ui_scaled else 1.0
             
             future_predictions.append({
