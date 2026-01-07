@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore")
 # ==========================================
 # ⚙️ 設定常數
 # ==========================================
-# [修正] 同步設定為 3.6
+# [修正] 根據真實帳單校正後的倍率
 DESIGN_PEAK_LOAD_KW = 3.6 
 
 MODEL_FILES = {
@@ -85,7 +85,7 @@ def add_engineering_features(df):
     return df
 
 # ==========================================
-# 🧠 核心預測邏輯 (長程馬拉松版)
+# 🧠 核心預測邏輯 (長程馬拉松版 - 支援奇數月結算)
 # ==========================================
 def load_resources_and_predict(input_df=None):
     print("🚀 Starting Hybrid Prediction Service (Full Cycle Mode)...")
@@ -149,27 +149,44 @@ def load_resources_and_predict(input_df=None):
         # 初始化天氣模擬器
         weather_sim = WeatherSimulator(history_df)
         
+        # -----------------------------------------------------------
+        # 🏃 [預測規劃] 計算還需要跑多遠 (奇數月結算制)
+        # -----------------------------------------------------------
         last_timestamp = history_df.index[-1]
-        
-        # [修正] 配合 app_utils 的奇數月結算制 (12-1, 2-3, 4-5...)
         curr_year = last_timestamp.year
         curr_mon = last_timestamp.month
         
+        # [核心修正] 判斷結算日 (Target Date)
+        # 週期邏輯：12-1, 2-3, 4-5, 6-7, 8-9, 10-11
         if curr_mon == 1:
+            # 1月屬於 "去年12月~今年1月" -> 結束日是今年1月底
             end_year = curr_year
             end_mon = 1
-        elif curr_mon % 2 == 0:
-            end_year = curr_year
-            end_mon = curr_mon + 1
+        elif curr_mon == 12:
+            # 12月屬於 "今年12月~明年1月" -> 結束日是明年1月底
+            end_year = curr_year + 1
+            end_mon = 1
         else:
-            end_year = curr_year
-            end_mon = curr_mon
-            
+            # 其他月份
+            if curr_mon % 2 == 0:
+                # 偶數月 (2, 4...) 是週期的開始 -> 結束日是下個月
+                end_year = curr_year
+                end_mon = curr_mon + 1
+            else:
+                # 奇數月 (3, 5...) 是週期的結束 -> 結束日是這個月
+                end_year = curr_year
+                end_mon = curr_mon
+        
+        # 取得該月最後一天
         last_day = calendar.monthrange(end_year, end_mon)[1]
         cycle_end_date = datetime(end_year, end_mon, last_day, 23, 0, 0)
         
         # 計算剩餘小時數
-        hours_to_predict = int((cycle_end_date - last_timestamp).total_seconds()
+        hours_to_predict = int((cycle_end_date - last_timestamp).total_seconds() / 3600)
+        
+        # 防呆：如果已經過了結算日(或剛好最後一天)，還是預測個 24 小時意思一下
+        if hours_to_predict <= 0:
+            hours_to_predict = 24
             
         print(f"⏱️ Predicting from {last_timestamp} to {cycle_end_date} ({hours_to_predict} hours)")
 
@@ -178,7 +195,7 @@ def load_resources_and_predict(input_df=None):
         current_df = history_df.iloc[-buffer_size:].copy()
         future_predictions = []
         
-        # 為了效能，每 24 小時印一次進度
+        # 為了效能，每 48 小時印一次進度
         for i in range(1, hours_to_predict + 1): 
             next_time = last_timestamp + timedelta(hours=i)
             
@@ -252,8 +269,6 @@ def load_resources_and_predict(input_df=None):
         ui_history_df = ui_history_df.rename(columns={'power': 'power_kW'})
         ui_history_df = ui_history_df[['power_kW']]
         
-        # 回傳合併後的完整數據 (歷史 + 預測)，方便前端切割
-        # 但為了相容性，我們還是分開回傳
         print(f"✅ Prediction complete. Generated {len(result_df)} future points.")
         return result_df, ui_history_df
 
