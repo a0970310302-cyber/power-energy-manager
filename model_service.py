@@ -39,12 +39,24 @@ HISTORY_PANTRY_ID = "6a2e85f5-4af4-4efd-bb9f-c5604fe8475e"
 LOOKBACK_HOURS = 168
 
 # ==========================================
+# 🔧 [新增] 輔助工具：自動計算籃子名稱
+# ==========================================
+def get_basket_name(dt: datetime):
+    """
+    根據日期自動計算 Basket 名稱，例如: 2026-01-06 -> '2026-q1'
+    """
+    quarter = (dt.month - 1) // 3 + 1
+    return f"{dt.year}-q{quarter}"
+
+# ==========================================
 # 🛠️ 特徵工程 (保持不變)
 # ==========================================
 def get_taiwan_holidays():
     return ["2024-01-01", "2024-02-08", "2024-02-09", "2024-02-10", "2024-02-11", 
             "2024-02-12", "2024-02-13", "2024-02-14", "2024-02-28", "2024-04-04", 
-            "2024-04-05", "2024-05-01", "2024-06-10", "2024-09-17", "2024-10-10"]
+            "2024-04-05", "2024-05-01", "2024-06-10", "2024-09-17", "2024-10-10",
+            # 建議補上 2025, 2026 的假期，或是讓它自動化，目前先維持原樣
+            "2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31"]
 
 def add_lgbm_features(df):
     df = df.copy()
@@ -96,7 +108,7 @@ def add_lstm_features(df):
     return df
 
 # ==========================================
-# 📥 資料獲取邏輯 (修正版)
+# 📥 資料獲取邏輯
 # ==========================================
 def find_data_list(data_dict):
     target_key = "listAMIBase15MinData"
@@ -114,40 +126,26 @@ def find_data_list(data_dict):
     return None, None
 
 def process_raw_data_to_df(target_list, date_context):
-    """
-    【核心修正】增強時間解析能力，防止散裝資料被誤判為今天
-    """
     if not target_list:
         return pd.DataFrame()
 
     df = pd.DataFrame(target_list)
     
-    # 欄位重新命名
     if 'power' in df.columns:
         df = df.rename(columns={'power': 'power_kW'})
     
-    # --- 時間組合邏輯 (修正重點) ---
     try:
         if 'full_timestamp' in df.columns:
-            # 優先使用完整的 timestamp 欄位
             df['timestamp'] = pd.to_datetime(df['full_timestamp'], errors='coerce')
-            
         elif 'date' in df.columns and 'time' in df.columns:
-            # 如果資料裡自帶 date 欄位，就用它
             df['timestamp'] = pd.to_datetime(df['date'].astype(str) + " " + df['time'].astype(str), errors='coerce')
-            
         elif 'time' in df.columns:
             if date_context:
-                # 如果有外層包裹的日期 Key，就用它
                 df['timestamp'] = pd.to_datetime(f"{date_context} " + df['time'], errors='coerce')
             else:
-                # ⚠️ 危險區：沒有日期 Key，也沒有 date 欄位
-                # 嘗試看看有沒有隱藏的日期資訊，若無，這裡確實會變成今天
-                # 但大多數歷史資料應該都會有 date 欄位
                 df['timestamp'] = pd.to_datetime(df['time'], errors='coerce')
-                
         else:
-            return pd.DataFrame() # 沒時間資訊，無法處理
+            return pd.DataFrame() 
             
     except Exception as e:
         print(f"⚠️ 時間解析失敗: {e}")
@@ -160,7 +158,6 @@ def process_raw_data_to_df(target_list, date_context):
     df = df.set_index('timestamp').sort_index()
     df['power_kW'] = pd.to_numeric(df['power_kW'], errors='coerce')
     
-    # --- 資料清洗 ---
     if 'isMissingData' in df.columns:
         df.loc[df['isMissingData'] == 1, 'power_kW'] = np.nan
         df.loc[df['isMissingData'] == '1', 'power_kW'] = np.nan
@@ -180,20 +177,17 @@ def fetch_live_data():
         response = requests.get(LIVE_DATA_URL, timeout=5)
         data_json = response.json()
         
-        # 根據組員說明，Status 0 代表資料有問題，直接回傳 None 讓它去用備援
         if data_json.get('status') != 1:
             print(f"⚠️ [Live] API Status: {data_json.get('status')} (暫無即時資料)")
             return None
             
         raw_data = data_json['data']
-        # 檢查散裝
         if isinstance(raw_data, list) and len(raw_data) > 0:
             first_item = raw_data[0]
             if isinstance(first_item, dict) and ("power" in first_item or "power_kW" in first_item):
                 print(f"✅ [Live] 取得散裝資料 {len(raw_data)} 筆")
                 return process_raw_data_to_df(raw_data, None)
 
-        # 檢查包裝
         target_list = []
         date_context = None
         if isinstance(raw_data, list) and len(raw_data) > 0:
@@ -210,10 +204,25 @@ def fetch_live_data():
         return None
 
 def fetch_recent_history_gap():
-    target_baskets = ["2025-q4"] 
+    """
+    [修正] 自動判斷要抓取的歷史籃子 (跨季度支援)
+    """
+    now = datetime.now()
+    
+    # 1. 取得本季籃子 (例如 2026-q1)
+    current_basket = get_basket_name(now)
+    
+    # 2. 取得上一季籃子 (例如 2025-q4)
+    # 邏輯：取得本月1號的前一天，就是上個月底，用那一天來算上一季
+    last_month_date = now.replace(day=1) - timedelta(days=1)
+    prev_basket = get_basket_name(last_month_date)
+    
+    # 3. 建立目標清單 (去重排序)
+    target_baskets = sorted(list({prev_basket, current_basket}))
+    
     all_gap_dfs = []
     
-    print("⏳ [Gap] 正在補齊歷史資料缺口 (2025-q4)...")
+    print(f"⏳ [Gap] 正在補齊歷史資料，目標籃子: {target_baskets} ...")
     
     for basket in target_baskets:
         url = f"https://getpantry.cloud/apiv1/pantry/{HISTORY_PANTRY_ID}/basket/{basket}"
@@ -226,8 +235,7 @@ def fetch_recent_history_gap():
                     print(f"   📦 [Gap] {basket} 下載成功: {len(raw_items)} items")
                     
                     if len(raw_items) > 0 and isinstance(raw_items[0], dict) and ("power" in raw_items[0] or "power_kW" in raw_items[0]):
-                         print("   🔍 [Gap] 偵測到散裝格式，使用內建日期欄位解析...")
-                         # 這裡傳入 None，強制 process_raw_data_to_df 去找內部的 date 欄位
+                         # print("   🔍 [Gap] 偵測到散裝格式，使用內建日期欄位解析...")
                          df = process_raw_data_to_df(raw_items, None)
                          if not df.empty:
                             all_gap_dfs.append(df)
@@ -254,6 +262,88 @@ def fetch_recent_history_gap():
     except:
         return pd.DataFrame()
 
+# ==========================================
+# 💾 [自動歸檔] 核心功能 (包含滑動視窗)
+# ==========================================
+def auto_archive_live_data(live_df):
+    """
+    自動將最新的 Live Data 歸檔到對應的歷史 Pantry Basket
+    包含：自動判斷季度、滑動視窗(保留約2000筆)、防重複檢查
+    """
+    if live_df is None or live_df.empty:
+        return
+
+    try:
+        # 1. 取出 Live Data 最新的一筆資料
+        latest_record = live_df.iloc[-1].copy()
+        
+        # 🔥 [修正] 動態決定目標籃子
+        dynamic_basket = get_basket_name(latest_record.name)
+        history_url = f"https://getpantry.cloud/apiv1/pantry/{HISTORY_PANTRY_ID}/basket/{dynamic_basket}"
+        
+        new_data_payload = {
+            "date": latest_record.name.strftime("%Y-%m-%d"),
+            "time": latest_record.name.strftime("%H:%M:%S"),
+            "power_kW": float(latest_record['power_kW']),
+            "temperature": float(latest_record['temperature']),
+            "humidity": float(latest_record['humidity'])
+        }
+
+        print(f"💾 [Archive] 準備歸檔到 [{dynamic_basket}]: {new_data_payload['date']} {new_data_payload['time']}")
+
+        # 2. 下載目前的歷史資料
+        headers = {'Content-Type': 'application/json'}
+        r = requests.get(history_url, timeout=10)
+        
+        current_history = []
+        if r.status_code == 200:
+            data = r.json()
+            if "data" in data and isinstance(data["data"], list):
+                current_history = data["data"]
+            elif isinstance(data, list):
+                current_history = data
+            elif isinstance(data, dict):
+                current_history = [data]
+        
+        # 3. 重複檢查 (防呆)
+        if current_history:
+            last_item = current_history[-1]
+            last_date = last_item.get('date', '')
+            last_time = last_item.get('time', '')
+            
+            # 只比對到分鐘 (前5碼) 以容忍秒數差異
+            new_time_short = new_data_payload['time'][:5]
+            last_time_short = str(last_time)[:5]
+            
+            if last_date == new_data_payload['date'] and last_time_short == new_time_short:
+                print("   ⚠️ [Archive] 資料已存在 (時間重複)，跳過存檔。")
+                return
+
+        # 4. 附加新資料
+        current_history.append(new_data_payload)
+        
+        # 5. 滑動視窗保護 (避免 Basket 爆滿)
+        MAX_RECORDS = 2000
+        if len(current_history) > MAX_RECORDS:
+            cut_count = len(current_history) - MAX_RECORDS
+            current_history = current_history[-MAX_RECORDS:]
+            print(f"   ✂️ [Archive] 觸發滑動視窗，移除舊資料 {cut_count} 筆")
+
+        # 6. POST 回去
+        payload_to_send = {"data": current_history}
+        post_r = requests.post(history_url, json=payload_to_send, headers=headers, timeout=10)
+        
+        if post_r.status_code == 200:
+            print(f"   ✅ [Archive] 歸檔成功！目前歷史筆數: {len(current_history)}")
+        else:
+            print(f"   ❌ [Archive] 上傳失敗: {post_r.text}")
+
+    except Exception as e:
+        print(f"   ❌ [Archive Error] 歸檔過程發生錯誤: {e}")
+
+# ==========================================
+# 🧠 主預測流程
+# ==========================================
 def load_resources_and_predict():
     resources = {}
     try:
@@ -275,7 +365,7 @@ def load_resources_and_predict():
         if 'power' in hist_df.columns: hist_df = hist_df.rename(columns={'power': 'power_kW'})
         print(f"   📄 [CSV] 靜態資料: 到 {hist_df.index.max()}")
         
-        # (B) 雲端補洞
+        # (B) 雲端補洞 (已支援跨季度)
         gap_df = fetch_recent_history_gap()
         
         # (C) 即時 Live (允許失敗)
@@ -298,9 +388,7 @@ def load_resources_and_predict():
         buffer_size = 2000
         df_ready = combined_df.iloc[-buffer_size:].copy()
         
-        # 確保最後一筆不是 NaN
         if pd.isna(df_ready.iloc[-1]['power']) or df_ready.iloc[-1]['power'] == 0:
-             # 如果最新資料是空的，往前找最近的一筆有效資料當作起點
              valid_idx = df_ready['power'].last_valid_index()
              if valid_idx:
                  df_ready = df_ready.loc[:valid_idx]
@@ -346,84 +434,14 @@ def load_resources_and_predict():
             "LSTM": pred_lstm
         }).set_index("時間")
         
+        # =========== 🔥 執行自動歸檔 ===========
+        if live_df is not None and not live_df.empty:
+            print("🚀 [System] 啟動背景歸檔程序...")
+            auto_archive_live_data(live_df) # 不用參數，自動判斷
+        # =====================================
+        
         return result_df, combined_df
         
     except Exception as e:
         print(f"❌ [Model Service Error]: {e}")
         return None, None
-    
-
-def auto_archive_live_data(live_df, target_basket="2025-q4"):
-    """
-    自動將最新的 Live Data 歸檔到歷史 Pantry Basket
-    """
-    if live_df is None or live_df.empty:
-        return
-
-    # 1. 準備目標 URL (歷史資料區)
-    history_url = f"https://getpantry.cloud/apiv1/pantry/{HISTORY_PANTRY_ID}/basket/{target_basket}"
-    
-    try:
-        # 2. 取出 Live Data 最新的一筆資料 (轉成 dict 格式)
-        # 假設我們只存最後一筆，避免重複存取
-        latest_record = live_df.iloc[-1].copy()
-        latest_time_str = latest_record.name.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 轉換成 Pantry 習慣的 JSON 格式 (這裡要配合你們原本的儲存格式，假設是散裝 dict)
-        new_data_payload = {
-            "date": latest_record.name.strftime("%Y-%m-%d"),
-            "time": latest_record.name.strftime("%H:%M"),
-            "power_kW": float(latest_record['power_kW']),
-            "temperature": float(latest_record['temperature']),
-            "humidity": float(latest_record['humidity'])
-        }
-
-        print(f"💾 [Archive] 嘗試歸檔資料: {latest_time_str}")
-
-        # 3. 下載目前的歷史資料 (為了比對避免重複)
-        headers = {'Content-Type': 'application/json'}
-        r = requests.get(history_url, timeout=10)
-        
-        current_history = []
-        if r.status_code == 200:
-            data = r.json()
-            # 處理 Pantry 可能回傳的結構 (有 data key 或是直接 list)
-            if "data" in data:
-                current_history = data["data"]
-            elif isinstance(data, list):
-                current_history = data
-            elif isinstance(data, dict):
-                # 如果原本是單層 dict，轉成 list
-                current_history = [data]
-        
-        # 4. 重複檢查 (防呆)
-        # 檢查最後一筆的時間是否跟我們要存的一樣
-        if current_history:
-            last_history_item = current_history[-1]
-            # 這裡需要簡單的解析來比對時間，避免重複 append
-            last_date = last_history_item.get('date', '')
-            last_time = last_history_item.get('time', '')
-            if last_date == new_data_payload['date'] and last_time == new_data_payload['time']:
-                print("   ⚠️ [Archive] 資料已存在，跳過存檔。")
-                return
-
-        # 5. 附加新資料並上傳
-        current_history.append(new_data_payload)
-        
-        # 如果歷史資料太多 (例如超過 5000 筆)，可能會讓 Pantry 變慢
-        # 建議可以設個上限，例如只保留最近 14 天 (336小時)
-        # current_history = current_history[-336:] 
-
-        # 6. POST 回去 (更新 Basket)
-        # 注意：Pantry 的 POST 會直接取代原本內容
-        payload_to_send = {"data": current_history} # 包一層 data 比較安全，符合你原本的結構
-        
-        post_r = requests.post(history_url, json=payload_to_send, headers=headers, timeout=10)
-        
-        if post_r.status_code == 200:
-            print(f"   ✅ [Archive] 歸檔成功！目前歷史筆數: {len(current_history)}")
-        else:
-            print(f"   ❌ [Archive] 上傳失敗: {post_r.text}")
-
-    except Exception as e:
-        print(f"   ❌ [Archive Error] 歸檔過程發生錯誤: {e}")
