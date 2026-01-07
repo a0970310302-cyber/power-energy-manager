@@ -149,23 +149,27 @@ def load_resources_and_predict(input_df=None):
         # 初始化天氣模擬器
         weather_sim = WeatherSimulator(history_df)
         
-        # -----------------------------------------------------------
-        # 🏃 [預測規劃] 計算還需要跑多遠 (到本期帳單結束)
-        # -----------------------------------------------------------
         last_timestamp = history_df.index[-1]
         
-        # 簡單計算帳單週期結束日 (複製 app_utils 邏輯以免循環引用)
+        # [修正] 配合 app_utils 的奇數月結算制 (12-1, 2-3, 4-5...)
+        curr_year = last_timestamp.year
         curr_mon = last_timestamp.month
-        start_mon = curr_mon if curr_mon % 2 != 0 else curr_mon - 1
-        end_mon = start_mon + 1
-        last_day = calendar.monthrange(last_timestamp.year, end_mon)[1]
-        cycle_end_date = datetime(last_timestamp.year, end_mon, last_day, 23, 0, 0)
+        
+        if curr_mon == 1:
+            end_year = curr_year
+            end_mon = 1
+        elif curr_mon % 2 == 0:
+            end_year = curr_year
+            end_mon = curr_mon + 1
+        else:
+            end_year = curr_year
+            end_mon = curr_mon
+            
+        last_day = calendar.monthrange(end_year, end_mon)[1]
+        cycle_end_date = datetime(end_year, end_mon, last_day, 23, 0, 0)
         
         # 計算剩餘小時數
-        hours_to_predict = int((cycle_end_date - last_timestamp).total_seconds() / 3600)
-        if hours_to_predict <= 0:
-            # 如果已經是最後一天，預測未來 24 小時即可
-            hours_to_predict = 24
+        hours_to_predict = int((cycle_end_date - last_timestamp).total_seconds()
             
         print(f"⏱️ Predicting from {last_timestamp} to {cycle_end_date} ({hours_to_predict} hours)")
 
