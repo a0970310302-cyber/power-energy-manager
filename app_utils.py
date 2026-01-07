@@ -6,6 +6,7 @@ import numpy as np
 import os
 import re
 import json
+import joblib  # <--- 新增：為了支援 load_model
 from datetime import datetime, timedelta
 
 # ==========================================
@@ -99,11 +100,25 @@ def load_data():
         return pd.DataFrame()
 
 # ==========================================
-# 📊 關鍵指標計算 (KPIs) - [補回]
+# 🧠 模型載入工具 (補回)
+# ==========================================
+def load_model(path):
+    """
+    載入 .pkl 模型檔案 (提供給 page_analysis.py 使用)
+    """
+    try:
+        model = joblib.load(path)
+        return model
+    except Exception as e:
+        print(f"❌ 無法載入模型 {path}: {e}")
+        return None
+
+# ==========================================
+# 📊 關鍵指標計算 (KPIs)
 # ==========================================
 def get_core_kpis(df):
     """
-    計算首頁顯示的關鍵指標：今日用電、目前負載、昨日對比
+    計算首頁顯示的關鍵指標
     """
     if df is None or df.empty:
         return {
@@ -114,17 +129,14 @@ def get_core_kpis(df):
             "last_updated": "N/A"
         }
     
-    # 取得最新一筆資料的時間
     latest_time = df.index[-1]
     
     # 1. 目前負載 (kW)
     current_load = df['power_kW'].iloc[-1]
     
     # 2. 今日累積用電 (kWh)
-    # 定義「今日」的範圍 (從當天 00:00 到最新時間)
     today_start = latest_time.replace(hour=0, minute=0, second=0, microsecond=0)
     today_df = df[df.index >= today_start]
-    # 計算方式：功率(kW) * 時間(0.25小時, 因為是15分一筆)
     today_usage = today_df['power_kW'].sum() * 0.25
     
     # 3. 昨日同期累積用電 (kWh)
