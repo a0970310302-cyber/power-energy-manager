@@ -147,7 +147,7 @@ def analyze_pricing_plans(df):
     if df is None or df.empty: return None, None
     df = df.copy()
     
-    time_factor = 0.25
+    time_factor = 1
     if len(df) > 1:
         time_factor = (df.index[1] - df.index[0]).total_seconds() / 3600.0
     
@@ -235,7 +235,7 @@ def get_core_kpis(df):
     }
     if df is None or df.empty: return default_kpis
     try:
-        time_factor = 0.25
+        time_factor = 1
         if len(df) > 1: time_factor = (df.index[1] - df.index[0]).total_seconds() / 3600.0
         
         latest_time = df.index[-1]
