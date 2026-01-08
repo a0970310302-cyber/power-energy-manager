@@ -62,7 +62,7 @@ def show_tutorial_page():
     # --- 左側：AI 導遊 ---
     with col_robot:
         st.write("##")
-        robot_anim = load_lottiefile("lottiefiles/intelligent_tour_guide_robot.json")
+        robot_anim = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot.json")
         if robot_anim:
             st_lottie(robot_anim, speed=1, loop=True, height=350, key=f"robot_step_{st.session_state.tutorial_step}")
         else:
