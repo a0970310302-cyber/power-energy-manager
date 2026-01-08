@@ -46,7 +46,7 @@ def show_tutorial_page():
     with col_main:
         # 🤖 核心修改：將 AI 導遊機器人固定在每一頁的最上方
         # 這創造了一種「它一直在這裡陪你」的連貫感
-        robot_anim = load_lottiefile("lottiefiles/intelligent_tour_guide_robot.json")
+        robot_anim = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot_green.json")
         if robot_anim:
             # height=280 讓它夠大，成為畫面的主角
             st_lottie(robot_anim, speed=1, loop=True, height=280, key=f"guide_robot_{step}")
