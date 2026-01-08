@@ -27,8 +27,8 @@ def show_dashboard_page():
 
     kpis = get_core_kpis(df_history)
 
-    st.title("💡 家庭智慧電管家")
-    st.caption(f"{data_source_msg} | AI 滾動修正模組：Online") 
+    st.title("💡 智慧電能管家")
+    st.caption(f"{data_source_msg} | Hybrid AI 運算引擎：Online") 
 
     if not kpis['status_data_available']:
         st.warning("資料量不足，部分指標可能無法計算。")
@@ -129,13 +129,11 @@ def show_dashboard_page():
                     
                     # 縫合歷史與短期
                     if last_hist_point is not None:
-                        # 將上一段的終點，改成這一段的型別，加到這一段的開頭
                         connector = last_hist_point.copy()
                         connector['type'] = 'AI 短期預測 (48h)'
                         short_data = pd.concat([connector, short_data])
                     
                     plot_data.append(short_data)
-                    # 更新接點
                     last_short_point = short_data.iloc[[-1]].copy()
                 else:
                     last_short_point = last_hist_point
@@ -163,12 +161,12 @@ def show_dashboard_page():
             color_map = {
                 '歷史實績 (Actual)': '#00CC96',       # 綠色
                 'AI 短期預測 (48h)': '#EF553B',       # 深紅色
-                '長期趨勢推估 (Trend)': '#FFA15A'     # 橘黃色 (較柔和)
+                '長期趨勢推估 (Trend)': '#FFA15A'     # 橘黃色
             }
             dash_map = {
                 '歷史實績 (Actual)': 'solid',
-                'AI 短期預測 (48h)': 'dot',           # 點線 (強調預測性質)
-                '長期趨勢推估 (Trend)': 'dash'        # 虛線 (強調不確定性)
+                'AI 短期預測 (48h)': 'dot',
+                '長期趨勢推估 (Trend)': 'dash'
             }
 
             fig = px.line(df_chart, x='time', y='value', color='type', 
@@ -178,29 +176,31 @@ def show_dashboard_page():
                           title=f"帳單週期全程監控 ({cycle_start.strftime('%m/%d')} ~ {cycle_end.strftime('%m/%d')})",
                           template="plotly_dark")
             
-            # 強制鎖定 X 軸範圍 (實現雙月全景)
+            # [修正] 修改 Y 軸標籤為明確單位
+            fig.update_layout(yaxis_title="功率 (kW)")
+
+            # 強制鎖定 X 軸範圍
             fig.update_xaxes(range=[cycle_start, cycle_end])
             
             # 標示 "Now"
             fig.add_vline(x=latest_time.timestamp() * 1000, line_width=1, line_dash="solid", line_color="white")
             
-            # 在圖表上方加入標註
             st.plotly_chart(fig, use_container_width=True)
             
             st.info(f"""
             ℹ️ **圖表說明**：
             * **綠線**：已發生的真實用電。
-            * **紅點線**：AI 針對未來 48 小時的高精度預測。
-            * **橘虛線**：依據您的用電慣性與歷史氣溫，推估至結算日 ({cycle_end.strftime('%m/%d')}) 的參考走勢。
+            * **紅點線**：AI 針對未來 48 小時的高解析度預測。
+            * **橘虛線**：依據歷史氣候大數據推算至結算日 ({cycle_end.strftime('%m/%d')}) 的參考走勢。
             """)
             
         else:
             st.info("尚無本期數據。")
         
-        with st.expander("ℹ️ 技術原理：Hybrid Model"):
+        with st.expander("ℹ️ 技術原理：Hybrid Architecture"):
             st.write("""
-            本系統結合 **LightGBM** 與 **LSTM**。
-            短期預測採用即時特徵運算，長期推估則引入 **WeatherSimulator** 進行氣候模擬。
+            本系統採用 **長短週期混合運算架構**。
+            短期預測採用 **LSTM** 捕捉生活作息波動，長期推估則引入 **歷史氣候大數據** 進行趨勢校正。
             """)
 
     with tab2:
