@@ -37,9 +37,7 @@ def init_worker():
 
 def start_background_thread():
     """啟動背景執行緒"""
-    # [關鍵修正] 在使用前先確保它存在
     init_worker()
-    
     worker = st.session_state.bg_worker
     if not worker.is_done and not worker.is_running and not st.session_state.get("app_ready", False):
         t = threading.Thread(target=worker.run_task)
@@ -49,21 +47,19 @@ def start_background_thread():
 # 📖 導覽頁面主邏輯
 # ==========================================
 def show_tutorial_page():
-    # [關鍵修正] 進入頁面第一件事：初始化 Worker
+    # 初始化
     init_worker()
-    
-    # 1. 一進來就啟動背景運算 (Non-blocking)
     start_background_thread()
 
     if 'tutorial_step' not in st.session_state:
         st.session_state.tutorial_step = 1
 
-    # 2. 模式切換：如果是 loading 狀態，直接進入全螢幕載入函式
+    # Loading 模式攔截
     if st.session_state.tutorial_step == "loading":
         show_fullscreen_loading()
         return
 
-    # 3. 一般導覽 UI (左圖右文佈局)
+    # 頂部留白
     st.write("#")
     col_robot, col_content = st.columns([1.2, 2.0], gap="large")
 
@@ -79,7 +75,7 @@ def show_tutorial_page():
     # --- 右側：內容 ---
     with col_content:
         
-        # Step 1: 歡迎
+        # Step 1: 核心價值
         if st.session_state.tutorial_step == 1:
             st.markdown("### ⚡ 歡迎啟動「智慧電能管家」")
             st.markdown("##### —— 您的家庭能源首席財務官")
@@ -102,26 +98,36 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
 
-        # Step 2: 技術
+        # Step 2: 技術與數據來源 (已加入您的要求)
         elif st.session_state.tutorial_step == 2:
-            st.markdown("### 🧠 獨家 Hybrid AI 雙軌預測技術")
-            st.markdown("##### —— 結合深度學習與氣候模擬的完全體")
+            st.markdown("### 🧠 獨家 Hybrid AI 雙軌預測")
             
             st.markdown("""
-            市面上的電量 APP 大多只能顯示歷史，**我們是唯一能模擬未來的系統。**
-            為了達到 95% 以上的準確度，我們同時運行兩套神經網路：
+            市面上的 APP 多顯示歷史，**我們是唯一能模擬未來的系統。**
+            為了達到 95% 以上的準確度，我們運行兩套神經網路：
             """)
             
+            # AI 模型介紹
             with st.expander("🔴 紅線：LSTM 短期高精準模型", expanded=True):
-                st.write("""
-                專注於 **未來 48 小時** 的**小時級精細運算**。
-                它學習了您的生活作息（何時洗澡、何時煮飯），能精準捕捉每一個家電開啟的瞬間波動。
-                """)
+                st.write("專注於 **未來 48 小時** 的小時級精細運算。精準捕捉家電開啟的瞬間波動。")
                 
             with st.expander("🟠 橘線：氣候模擬推估系統", expanded=True):
-                st.write("""
-                專注於 **直到結算日** 的長期趨勢。
-                引入歷史氣象大數據，模擬未來的氣溫變化，幫您推算出最終的帳單總金額。
+                st.write("引入歷史氣象大數據，模擬未來的氣溫變化，推算直到 **結算日** 的最終帳單。")
+
+            # --- [新增] 數據來源與限制說明 ---
+            st.markdown("---")
+            st.markdown("##### 📡 數據來源與可信度")
+            
+            with st.expander("🔍 數據從哪裡來？會有延遲嗎？", expanded=False):
+                st.markdown("""
+                **1. 官方權威來源**：
+                本系統透過網路爬蟲技術，直接對接 **[台灣電力公司智慧電表服務](https://service.taipower.com.tw)**，確保每一度電的紀錄都與您的正式帳單一致。
+
+                **2. 關於「即時」的真實定義**：
+                受限於台電 AMI 智慧電表的硬體回傳機制，數據會有 **約 1 小時以上的傳輸延遲**。
+                
+                > **💡 為什麼這依然很有價值？**
+                > 雖然有一點時間差，但相比於 **兩個月後** 才收到帳單的「無力感」，這 1 小時的延遲完全不影響我們對 **月底總電費** 的精準預判與即時止損。
                 """)
 
             st.write("#")
@@ -160,8 +166,7 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
             
-            # 判斷狀態
-            # [關鍵修正] 這裡也要 init_worker 確保不報錯 (雖然開頭已經做了)
+            # 按鈕狀態判定
             init_worker()
             worker = st.session_state.bg_worker
             
@@ -201,7 +206,7 @@ def show_fullscreen_loading():
     # 2. 進度條初始化
     my_bar = placeholder_bar.progress(0, text="正在建立與 AI 核心的連線...")
     
-    # 3. 確保背景執行緒真的有在跑
+    # 3. 確保背景執行緒有在跑
     init_worker()
     worker = st.session_state.bg_worker
     
@@ -232,7 +237,7 @@ def show_fullscreen_loading():
         my_bar.progress(progress, text=status_text)
         time.sleep(0.1)
         
-        if wait_cycles > 600: # 逾時保護
+        if wait_cycles > 600: 
             st.error("連線逾時，請重新整理頁面。")
             st.stop()
 
