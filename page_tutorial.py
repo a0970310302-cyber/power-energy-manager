@@ -19,7 +19,6 @@ class BackgroundWorker:
     def run_task(self):
         self.is_running = True
         try:
-            # 執行耗時運算
             res_df, hist_df = load_resources_and_predict()
             self.result = res_df
             self.history = hist_df
@@ -31,12 +30,10 @@ class BackgroundWorker:
             self.is_running = False
 
 def init_worker():
-    """確保 bg_worker 存在於當前的 session_state"""
     if 'bg_worker' not in st.session_state:
         st.session_state.bg_worker = BackgroundWorker()
 
 def start_background_thread():
-    """啟動背景執行緒"""
     init_worker()
     worker = st.session_state.bg_worker
     if not worker.is_done and not worker.is_running and not st.session_state.get("app_ready", False):
@@ -47,7 +44,6 @@ def start_background_thread():
 # 📖 導覽頁面主邏輯
 # ==========================================
 def show_tutorial_page():
-    # 初始化
     init_worker()
     start_background_thread()
 
@@ -59,8 +55,9 @@ def show_tutorial_page():
         show_fullscreen_loading()
         return
 
-    # 頂部留白
     st.write("#")
+    
+    # 版面分配：機器人(1.2) | 內容(2.0)
     col_robot, col_content = st.columns([1.2, 2.0], gap="large")
 
     # --- 左側：AI 導遊 ---
@@ -75,7 +72,9 @@ def show_tutorial_page():
     # --- 右側：內容 ---
     with col_content:
         
+        # ==========================================
         # Step 1: 核心價值
+        # ==========================================
         if st.session_state.tutorial_step == 1:
             st.markdown("### ⚡ 歡迎啟動「智慧電能管家」")
             st.markdown("##### —— 您的家庭能源首席財務官")
@@ -98,7 +97,9 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
 
-        # Step 2: 技術與數據來源 (已加入您的要求)
+        # ==========================================
+        # Step 2: 技術與數據來源
+        # ==========================================
         elif st.session_state.tutorial_step == 2:
             st.markdown("### 🧠 獨家 Hybrid AI 雙軌預測")
             
@@ -107,40 +108,68 @@ def show_tutorial_page():
             為了達到 95% 以上的準確度，我們運行兩套神經網路：
             """)
             
-            # AI 模型介紹
             with st.expander("🔴 紅線：LSTM 短期高精準模型", expanded=True):
                 st.write("專注於 **未來 48 小時** 的小時級精細運算。精準捕捉家電開啟的瞬間波動。")
                 
             with st.expander("🟠 橘線：氣候模擬推估系統", expanded=True):
                 st.write("引入歷史氣象大數據，模擬未來的氣溫變化，推算直到 **結算日** 的最終帳單。")
 
-            # --- [新增] 數據來源與限制說明 ---
             st.markdown("---")
-            st.markdown("##### 📡 數據來源與可信度")
-            
-            with st.expander("🔍 數據從哪裡來？會有延遲嗎？", expanded=False):
-                st.markdown("""
-                **1. 官方權威來源**：
-                本系統透過網路爬蟲技術，直接對接 **[台灣電力公司智慧電表服務](https://service.taipower.com.tw)**，確保每一度電的紀錄都與您的正式帳單一致。
-
-                **2. 關於「即時」的真實定義**：
-                受限於台電 AMI 智慧電表的硬體回傳機制，數據會有 **約 1 小時以上的傳輸延遲**。
-                
-                > **💡 為什麼這依然很有價值？**
-                > 雖然有一點時間差，但相比於 **兩個月後** 才收到帳單的「無力感」，這 1 小時的延遲完全不影響我們對 **月底總電費** 的精準預判與即時止損。
-                """)
+            st.caption("📡 數據來源：本系統對接台電官方 AMI 智慧電表資料庫 (service.taipower.com.tw)，雖受限於硬體傳輸有約 1 小時延遲，但能確保數據權威性。")
 
             st.write("#")
             c1, c2 = st.columns([1, 2])
             if c1.button("⬅ 上一步", use_container_width=True):
                 st.session_state.tutorial_step = 1
                 st.rerun()
-            if c2.button("下一步：省錢決策室 ➔", type="primary", use_container_width=True):
+            if c2.button("下一步：我們 vs 台電官方 ➔", type="primary", use_container_width=True):
                 st.session_state.tutorial_step = 3
                 st.rerun()
 
-        # Step 3: 決策
+        # ==========================================
+        # [NEW] Step 3: 競品分析 (我們 vs 台電)
+        # ==========================================
         elif st.session_state.tutorial_step == 3:
+            st.markdown("### ⚔️ 我們與官方 App 有何不同？")
+            st.markdown("##### —— 後照鏡 vs GPS 導航")
+            
+            st.write("這不是要取代台電 App，而是為您加上一顆**預知大腦**。")
+
+            # 使用兩個 Column 做強烈對比
+            col_official, col_us = st.columns(2)
+            
+            with col_official:
+                st.markdown("#### 🏛️ 台電官方 App")
+                st.warning("功能：數位記帳本")
+                st.markdown("""
+                * ❌ **只看過去**：告訴你昨天花了多少錢。
+                * ❌ **被動告知**：當你發現電費過高時，**錢已經扣掉了**。
+                * ❌ **單純紀錄**：給你數據，但沒告訴你該怎麼辦。
+                """)
+                
+            with col_us:
+                st.markdown("#### ⚡ 智慧電能管家")
+                st.success("功能：AI 理財顧問")
+                st.markdown("""
+                * ✅ **預知未來**：告訴你**月底將會花多少錢**。
+                * ✅ **主動防禦**：在超支發生 **兩週前** 就發出警報。
+                * ✅ **決策輔助**：直接計算「換什麼費率」最省錢。
+                """)
+
+            st.write("#")
+            st.divider()
+            c1, c2 = st.columns([1, 2])
+            if c1.button("⬅ 上一步", use_container_width=True):
+                st.session_state.tutorial_step = 2
+                st.rerun()
+            if c2.button("下一步：省錢決策室 ➔", type="primary", use_container_width=True):
+                st.session_state.tutorial_step = 4
+                st.rerun()
+
+        # ==========================================
+        # Step 4: 決策與啟動 (原 Step 3)
+        # ==========================================
+        elif st.session_state.tutorial_step == 4:
             st.markdown("### 💰 錢要花在刀口上")
             st.markdown("##### —— 讓數據轉化為您的被動收入")
             
@@ -163,10 +192,9 @@ def show_tutorial_page():
             
             c1, c2 = st.columns([1, 2])
             if c1.button("⬅ 上一步", use_container_width=True):
-                st.session_state.tutorial_step = 2
+                st.session_state.tutorial_step = 3
                 st.rerun()
             
-            # 按鈕狀態判定
             init_worker()
             worker = st.session_state.bg_worker
             
@@ -179,20 +207,22 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = "loading"
                 st.rerun()
 
+    # 進度條修正為 4 步驟
     st.write("---")
-    st.progress(st.session_state.tutorial_step / 3 if isinstance(st.session_state.tutorial_step, int) else 1.0)
+    current_step = st.session_state.tutorial_step if isinstance(st.session_state.tutorial_step, int) else 4
+    st.progress(current_step / 4)
+    st.caption(f"系統導覽進度：{current_step} / 4")
 
 
 def show_fullscreen_loading():
     """
-    【Loading 模式】死守迴圈，直到後台運算完成
+    【Loading 模式】
     """
     loading_anim = load_lottiefile("lottiefiles/loading_animation.json")
     
     placeholder_lottie = st.empty()
     placeholder_bar = st.empty()
 
-    # 1. 顯示動圖
     with placeholder_lottie:
         _, c_center, _ = st.columns([1, 2, 1])
         with c_center:
@@ -203,10 +233,8 @@ def show_fullscreen_loading():
             else:
                 st.spinner("系統啟動中...")
 
-    # 2. 進度條初始化
     my_bar = placeholder_bar.progress(0, text="正在建立與 AI 核心的連線...")
     
-    # 3. 確保背景執行緒有在跑
     init_worker()
     worker = st.session_state.bg_worker
     
@@ -214,7 +242,6 @@ def show_fullscreen_loading():
         start_background_thread() 
         time.sleep(1)
 
-    # 4. 真實等待迴圈
     progress = 0
     wait_cycles = 0
     
@@ -223,10 +250,8 @@ def show_fullscreen_loading():
             progress += 1
         else:
             time.sleep(0.1)
-            
         wait_cycles += 1
         
-        # 動態文案
         if wait_cycles < 20:
             status_text = f"正在載入歷史氣象資料... ({progress}%)"
         elif wait_cycles < 50:
@@ -241,17 +266,14 @@ def show_fullscreen_loading():
             st.error("連線逾時，請重新整理頁面。")
             st.stop()
 
-    # 5. 完成
     my_bar.progress(100, text="數據視覺化渲染完成！")
     time.sleep(0.5)
 
-    # 6. 取出結果
     if worker.result is not None:
         st.session_state.prediction_result = worker.result
         st.session_state.current_data = worker.history
         st.session_state.app_ready = True
     
-    # 7. 跳轉
     st.session_state.page = "home"
     st.session_state.tutorial_finished = True
     st.rerun()
