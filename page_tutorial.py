@@ -1,4 +1,4 @@
-# page_tutorial.py 完整代碼
+# page_tutorial.py
 import streamlit as st
 import time
 from streamlit_lottie import st_lottie
@@ -7,25 +7,15 @@ from model_service import load_resources_and_predict
 
 def show_tutorial_page():
     """
-    全螢幕導覽模式 - 隱藏側邊欄以降低等待感
+    全螢幕導覽模式 - 修正白屏問題 (先渲染 UI，最後再跑模型)
     """
     if 'tutorial_step' not in st.session_state:
         st.session_state.tutorial_step = 1
 
-    # --- 🚀 背景預熱模型 (靜默模式) ---
-    if not st.session_state.get("app_ready", False):
-        # 使用 hidden 容器來跑背景運作，完全不顯示進度條
-        with st.container():
-            try:
-                # 只在 session 內沒有數據時跑一次
-                if "prediction_result" not in st.session_state:
-                    res_df, hist_df = load_resources_and_predict() 
-                    st.session_state.prediction_result = res_df
-                    st.session_state.current_data = hist_df
-                    st.session_state.app_ready = True
-            except:
-                pass 
-
+    # ==========================================
+    # 🎨 UI 渲染區 (先做這個，確保畫面秒開)
+    # ==========================================
+    
     # 視覺置中佈局
     st.write("#") # 頂部間距
     _, col2, _ = st.columns([0.5, 2, 0.5])
@@ -88,8 +78,10 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
             
-            # 準備好了就進入首頁
-            if st.session_state.app_ready:
+            # 判斷按鈕狀態
+            is_ready = st.session_state.get("app_ready", False)
+            
+            if is_ready:
                 btn_text = "一切準備就緒，進入控制台！ ➔"
                 btn_type = "primary"
             else:
@@ -97,7 +89,7 @@ def show_tutorial_page():
                 btn_type = "secondary"
 
             if c2.button(btn_text, type=btn_type, use_container_width=True):
-                if st.session_state.app_ready:
+                if is_ready:
                     st.session_state.page = "home"
                     st.session_state.tutorial_finished = True
                     st.rerun()
@@ -108,3 +100,20 @@ def show_tutorial_page():
         st.write("---")
         st.progress(step / 3)
         st.caption(f"導覽進度：{step} / 3")
+
+    # ==========================================
+    # 🚀 背景運算區 (移到最後面！避免白屏)
+    # ==========================================
+    if not st.session_state.get("app_ready", False):
+        # 這裡不需要 with st.empty()，因為程式已經畫完 UI 了
+        # 我們直接在腳本末端執行運算，使用者只會看到右上角的 "Running"
+        try:
+            if "prediction_result" not in st.session_state:
+                res_df, hist_df = load_resources_and_predict() 
+                st.session_state.prediction_result = res_df
+                st.session_state.current_data = hist_df
+                st.session_state.app_ready = True
+                # 這裡不呼叫 rerurn，以免使用者看一半被強制重新整理
+                # 當使用者點擊按鈕時，app_ready 已經是 True 了
+        except:
+            pass
