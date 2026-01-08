@@ -26,16 +26,20 @@ class BackgroundWorker:
             self.is_done = True
         except Exception as e:
             print(f"Background Task Error: {e}")
-            self.is_done = True # 失敗也要標記完成以免卡死
+            self.is_done = True 
         finally:
             self.is_running = False
 
-# 初始化 worker
-if 'bg_worker' not in st.session_state:
-    st.session_state.bg_worker = BackgroundWorker()
+def init_worker():
+    """確保 bg_worker 存在於當前的 session_state"""
+    if 'bg_worker' not in st.session_state:
+        st.session_state.bg_worker = BackgroundWorker()
 
 def start_background_thread():
     """啟動背景執行緒"""
+    # [關鍵修正] 在使用前先確保它存在
+    init_worker()
+    
     worker = st.session_state.bg_worker
     if not worker.is_done and not worker.is_running and not st.session_state.get("app_ready", False):
         t = threading.Thread(target=worker.run_task)
@@ -45,6 +49,8 @@ def start_background_thread():
 # 📖 導覽頁面主邏輯
 # ==========================================
 def show_tutorial_page():
+    # [關鍵修正] 進入頁面第一件事：初始化 Worker
+    init_worker()
     
     # 1. 一進來就啟動背景運算 (Non-blocking)
     start_background_thread()
@@ -57,7 +63,7 @@ def show_tutorial_page():
         show_fullscreen_loading()
         return
 
-    # 3. 一般導覽 UI
+    # 3. 一般導覽 UI (左圖右文佈局)
     st.write("#")
     col_robot, col_content = st.columns([1.2, 2.0], gap="large")
 
@@ -84,12 +90,19 @@ def show_tutorial_page():
             我們不同，我們是一套 **「具有預知能力」** 的決策系統。
             """)
             
+            st.markdown("""
+            **我們的三大核心價值：**
+            1.  🔮 **預知未來**：提前 30 天告訴您本期帳單金額。
+            2.  🛡️ **預算防護**：即時監控每一度電，超支前立刻攔截。
+            3.  🧠 **決策大腦**：不只給數據，更直接告訴您「怎麼省」。
+            """)
+            
             st.write("#")
             if st.button("下一步：解密 AI 核心技術 ➔", type="primary", use_container_width=True):
                 st.session_state.tutorial_step = 2
                 st.rerun()
 
-        # Step 2: 技術 (已修正誇大文案)
+        # Step 2: 技術
         elif st.session_state.tutorial_step == 2:
             st.markdown("### 🧠 獨家 Hybrid AI 雙軌預測技術")
             st.markdown("##### —— 結合深度學習與氣候模擬的完全體")
@@ -100,7 +113,6 @@ def show_tutorial_page():
             """)
             
             with st.expander("🔴 紅線：LSTM 短期高精準模型", expanded=True):
-                # [修正] 將 "毫秒級" 改為 "小時級精細運算"
                 st.write("""
                 專注於 **未來 48 小時** 的**小時級精細運算**。
                 它學習了您的生活作息（何時洗澡、何時煮飯），能精準捕捉每一個家電開啟的瞬間波動。
@@ -148,8 +160,11 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
             
-            # 判斷狀態，給予使用者即時回饋
+            # 判斷狀態
+            # [關鍵修正] 這裡也要 init_worker 確保不報錯 (雖然開頭已經做了)
+            init_worker()
             worker = st.session_state.bg_worker
+            
             if worker.is_done:
                 btn_txt = "數據已準備就緒，進入控制台！ ➔"
             else:
@@ -161,9 +176,6 @@ def show_tutorial_page():
 
     st.write("---")
     st.progress(st.session_state.tutorial_step / 3 if isinstance(st.session_state.tutorial_step, int) else 1.0)
-    
-    # Debug 狀態顯示 (可選)
-    # st.caption(f"Background Status: {'Running' if st.session_state.bg_worker.is_running else 'Done' if st.session_state.bg_worker.is_done else 'Idle'}")
 
 
 def show_fullscreen_loading():
@@ -189,24 +201,23 @@ def show_fullscreen_loading():
     # 2. 進度條初始化
     my_bar = placeholder_bar.progress(0, text="正在建立與 AI 核心的連線...")
     
-    # 3. 確保背景執行緒真的有在跑 (防呆機制)
+    # 3. 確保背景執行緒真的有在跑
+    init_worker()
     worker = st.session_state.bg_worker
+    
     if not worker.is_running and not worker.is_done:
-        start_background_thread() # 如果意外沒跑，這裡強制啟動
-        time.sleep(1) # 給它一點時間啟動
+        start_background_thread() 
+        time.sleep(1)
 
-    # 4. 【關鍵】真實等待迴圈 (Real Wait Loop)
-    # 我們讓進度條在 0% ~ 90% 之間反覆跑，直到 worker.is_done 變成 True
+    # 4. 真實等待迴圈
     progress = 0
     wait_cycles = 0
     
     while not worker.is_done:
-        # 讓進度條有在前進的感覺，但不要到 100%
         if progress < 90:
             progress += 1
         else:
-            # 如果卡在 90% 太久，稍微閃爍一下文字讓使用者知道還在活著
-            pass
+            time.sleep(0.1)
             
         wait_cycles += 1
         
@@ -219,24 +230,23 @@ def show_fullscreen_loading():
             status_text = f"正在進行最後的數據整合... ({progress}%)"
             
         my_bar.progress(progress, text=status_text)
-        time.sleep(0.1) # 每 0.1 秒檢查一次
+        time.sleep(0.1)
         
-        # 安全機制：如果卡太久 (例如超過 60秒)，可能出錯了，強制跳出
-        if wait_cycles > 600:
+        if wait_cycles > 600: # 逾時保護
             st.error("連線逾時，請重新整理頁面。")
             st.stop()
 
-    # 5. 運算完成！衝刺最後 10%
+    # 5. 完成
     my_bar.progress(100, text="數據視覺化渲染完成！")
     time.sleep(0.5)
 
-    # 6. 取出結果並存入 Session
+    # 6. 取出結果
     if worker.result is not None:
         st.session_state.prediction_result = worker.result
         st.session_state.current_data = worker.history
         st.session_state.app_ready = True
     
-    # 7. 跳轉首頁
+    # 7. 跳轉
     st.session_state.page = "home"
     st.session_state.tutorial_finished = True
     st.rerun()
