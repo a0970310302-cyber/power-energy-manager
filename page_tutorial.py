@@ -48,7 +48,7 @@ def show_tutorial_page():
     # --- 左側：永遠駐守的 AI 導遊 ---
     with col_robot:
         st.write("##") # 微調垂直位置，讓機器人置中一點
-        robot_anim = load_lottiefile("lottiefiles/intelligent_tour_guide_robot.json")
+        robot_anim = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot_green.json")
         if robot_anim:
             st_lottie(robot_anim, speed=1, loop=True, height=350, key=f"robot_step_{step}")
         else:
