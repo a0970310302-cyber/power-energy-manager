@@ -6,8 +6,9 @@ from streamlit_lottie import st_lottie
 from app_utils import load_lottiefile
 from model_service import load_resources_and_predict
 
-# 用於在執行緒中傳遞結果的容器
-# 注意：Streamlit 的 session_state 在執行緒中不一定安全，所以我們用全域變數或閉包來處理
+# ==========================================
+# 🧵 背景工作執行緒 (Background Worker)
+# ==========================================
 class BackgroundWorker:
     def __init__(self):
         self.result = None
@@ -17,73 +18,63 @@ class BackgroundWorker:
 
     def run_task(self):
         self.is_running = True
-        print("🧵 [Thread] Background task started...")
         try:
-            # 這裡執行耗時運算
+            # 執行耗時運算
             res_df, hist_df = load_resources_and_predict()
             self.result = res_df
             self.history = hist_df
             self.is_done = True
-            print("🧵 [Thread] Background task finished!")
         except Exception as e:
-            print(f"🧵 [Thread] Error: {e}")
-            self.is_done = True # 即使失敗也標記完成，以免無窮等待
+            print(f"Background Task Error: {e}")
+            self.is_done = True # 失敗也要標記完成以免卡死
         finally:
             self.is_running = False
 
-# 初始化 worker 到 session_state (確保跨頁面存活)
+# 初始化 worker
 if 'bg_worker' not in st.session_state:
     st.session_state.bg_worker = BackgroundWorker()
 
 def start_background_thread():
-    """啟動背景執行緒 (如果還沒跑的話)"""
+    """啟動背景執行緒"""
     worker = st.session_state.bg_worker
-    # 只有在「沒做完」且「沒在跑」且「APP還沒準備好」的時候才啟動
     if not worker.is_done and not worker.is_running and not st.session_state.get("app_ready", False):
         t = threading.Thread(target=worker.run_task)
         t.start()
 
+# ==========================================
+# 📖 導覽頁面主邏輯
+# ==========================================
 def show_tutorial_page():
-    """
-    【故事模式】背景多執行緒運算 + 前台流暢導覽
-    """
+    
+    # 1. 一進來就啟動背景運算 (Non-blocking)
+    start_background_thread()
+
     if 'tutorial_step' not in st.session_state:
         st.session_state.tutorial_step = 1
 
-    # ==========================================
-    # 🚀 啟動背景引擎 (不會卡住畫面)
-    # ==========================================
-    start_background_thread()
-
-    # ==========================================
-    # 🎬 模式切換邏輯
-    # ==========================================
-    step = st.session_state.tutorial_step
-
-    # 如果進入 "loading" 模式
-    if step == "loading":
+    # 2. 模式切換：如果是 loading 狀態，直接進入全螢幕載入函式
+    if st.session_state.tutorial_step == "loading":
         show_fullscreen_loading()
         return
 
-    # ==========================================
-    # 📖 一般導覽模式 (Step 1~3)
-    # ==========================================
+    # 3. 一般導覽 UI
     st.write("#")
-    
-    # 左右佈局：機器人 vs 內容
     col_robot, col_content = st.columns([1.2, 2.0], gap="large")
 
+    # --- 左側：AI 導遊 ---
     with col_robot:
         st.write("##")
         robot_anim = load_lottiefile("lottiefiles/Intelligent_tour_guide_robot.json")
         if robot_anim:
-            st_lottie(robot_anim, speed=1, loop=True, height=350, key=f"robot_step_{step}")
+            st_lottie(robot_anim, speed=1, loop=True, height=350, key=f"robot_step_{st.session_state.tutorial_step}")
         else:
             st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=200)
 
+    # --- 右側：內容 ---
     with col_content:
+        
         # Step 1: 歡迎
-        if step == 1:
+        if st.session_state.tutorial_step == 1:
             st.markdown("### ⚡ 歡迎啟動「智慧電能管家」")
             st.markdown("##### —— 您的家庭能源首席財務官")
             
@@ -93,20 +84,13 @@ def show_tutorial_page():
             我們不同，我們是一套 **「具有預知能力」** 的決策系統。
             """)
             
-            st.markdown("""
-            **我們的三大核心價值：**
-            1.  🔮 **預知未來**：提前 30 天告訴您本期帳單金額。
-            2.  🛡️ **預算防護**：即時監控每一度電，超支前立刻攔截。
-            3.  🧠 **決策大腦**：不只給數據，更直接告訴您「怎麼省」。
-            """)
-            
             st.write("#")
             if st.button("下一步：解密 AI 核心技術 ➔", type="primary", use_container_width=True):
                 st.session_state.tutorial_step = 2
                 st.rerun()
 
-        # Step 2: 技術
-        elif step == 2:
+        # Step 2: 技術 (已修正誇大文案)
+        elif st.session_state.tutorial_step == 2:
             st.markdown("### 🧠 獨家 Hybrid AI 雙軌預測技術")
             st.markdown("##### —— 結合深度學習與氣候模擬的完全體")
             
@@ -116,8 +100,9 @@ def show_tutorial_page():
             """)
             
             with st.expander("🔴 紅線：LSTM 短期高精準模型", expanded=True):
+                # [修正] 將 "毫秒級" 改為 "小時級精細運算"
                 st.write("""
-                專注於 **未來 48 小時** 的毫秒級運算。
+                專注於 **未來 48 小時** 的**小時級精細運算**。
                 它學習了您的生活作息（何時洗澡、何時煮飯），能精準捕捉每一個家電開啟的瞬間波動。
                 """)
                 
@@ -137,7 +122,7 @@ def show_tutorial_page():
                 st.rerun()
 
         # Step 3: 決策
-        elif step == 3:
+        elif st.session_state.tutorial_step == 3:
             st.markdown("### 💰 錢要花在刀口上")
             st.markdown("##### —— 讓數據轉化為您的被動收入")
             
@@ -163,30 +148,27 @@ def show_tutorial_page():
                 st.session_state.tutorial_step = 2
                 st.rerun()
             
-            # --- 判斷按鈕文字 ---
+            # 判斷狀態，給予使用者即時回饋
             worker = st.session_state.bg_worker
             if worker.is_done:
                 btn_txt = "數據已準備就緒，進入控制台！ ➔"
-                btn_help = "後台模型已載入完成，可立即使用"
             else:
                 btn_txt = "🚀 啟動系統監控"
-                btn_help = "點擊後將進入載入畫面"
 
-            if c2.button(btn_txt, type="primary", use_container_width=True, help=btn_help):
-                # 這裡統一都進 loading，由 loading 去判斷是否要秒過
+            if c2.button(btn_txt, type="primary", use_container_width=True):
                 st.session_state.tutorial_step = "loading"
                 st.rerun()
 
     st.write("---")
-    st.progress(step / 3)
-    # 顯示隱藏的後台狀態給你看 (Debug用，實際上使用者不會注意到)
-    status_icon = "🟢" if st.session_state.bg_worker.is_done else "🟡" if st.session_state.bg_worker.is_running else "⚪"
-    st.caption(f"系統導覽進度：{step} / 3 | 後台引擎狀態：{status_icon}")
+    st.progress(st.session_state.tutorial_step / 3 if isinstance(st.session_state.tutorial_step, int) else 1.0)
+    
+    # Debug 狀態顯示 (可選)
+    # st.caption(f"Background Status: {'Running' if st.session_state.bg_worker.is_running else 'Done' if st.session_state.bg_worker.is_done else 'Idle'}")
 
 
 def show_fullscreen_loading():
     """
-    【Loading 模式】全螢幕動圖 + 真實運算等待
+    【Loading 模式】死守迴圈，直到後台運算完成
     """
     loading_anim = load_lottiefile("lottiefiles/loading_animation.json")
     
@@ -204,38 +186,57 @@ def show_fullscreen_loading():
             else:
                 st.spinner("系統啟動中...")
 
-    # 2. 檢查或等待背景執行緒
+    # 2. 進度條初始化
+    my_bar = placeholder_bar.progress(0, text="正在建立與 AI 核心的連線...")
+    
+    # 3. 確保背景執行緒真的有在跑 (防呆機制)
     worker = st.session_state.bg_worker
-    
-    # 如果還沒開始跑 (防呆)，就現在跑 (同步阻斷式)
-    if not worker.is_running and not worker.is_done and not st.session_state.get("app_ready", False):
-        worker.run_task() # 這會卡住畫面直到完成
+    if not worker.is_running and not worker.is_done:
+        start_background_thread() # 如果意外沒跑，這裡強制啟動
+        time.sleep(1) # 給它一點時間啟動
 
-    # 如果正在跑，就等待它完成
-    progress_text = "正在整合 AI 運算結果..."
-    my_bar = placeholder_bar.progress(0, text=progress_text)
+    # 4. 【關鍵】真實等待迴圈 (Real Wait Loop)
+    # 我們讓進度條在 0% ~ 90% 之間反覆跑，直到 worker.is_done 變成 True
+    progress = 0
+    wait_cycles = 0
     
-    # 進入等待迴圈
-    for i in range(100):
-        if worker.is_done:
-            my_bar.progress(100, text="載入完成！")
-            break
+    while not worker.is_done:
+        # 讓進度條有在前進的感覺，但不要到 100%
+        if progress < 90:
+            progress += 1
+        else:
+            # 如果卡在 90% 太久，稍微閃爍一下文字讓使用者知道還在活著
+            pass
+            
+        wait_cycles += 1
         
-        # 模擬進度條慢慢跑 (讓使用者知道沒當機)
-        # 進度條最多跑到 90%，剩下 10% 等真正做完才跑
-        current_progress = min(i * 2, 90)
-        my_bar.progress(current_progress, text="正在同步歷史氣象資料與 LSTM 權重...")
-        time.sleep(0.1) # 每 0.1 秒檢查一次狀態
+        # 動態文案
+        if wait_cycles < 20:
+            status_text = f"正在載入歷史氣象資料... ({progress}%)"
+        elif wait_cycles < 50:
+            status_text = f"啟動 LSTM 雙核心運算引擎... ({progress}%)"
+        else:
+            status_text = f"正在進行最後的數據整合... ({progress}%)"
+            
+        my_bar.progress(progress, text=status_text)
+        time.sleep(0.1) # 每 0.1 秒檢查一次
+        
+        # 安全機制：如果卡太久 (例如超過 60秒)，可能出錯了，強制跳出
+        if wait_cycles > 600:
+            st.error("連線逾時，請重新整理頁面。")
+            st.stop()
 
-    # 3. 取出結果並存入 session
+    # 5. 運算完成！衝刺最後 10%
+    my_bar.progress(100, text="數據視覺化渲染完成！")
+    time.sleep(0.5)
+
+    # 6. 取出結果並存入 Session
     if worker.result is not None:
         st.session_state.prediction_result = worker.result
         st.session_state.current_data = worker.history
         st.session_state.app_ready = True
     
-    time.sleep(0.5)
-
-    # 4. 跳轉首頁
+    # 7. 跳轉首頁
     st.session_state.page = "home"
     st.session_state.tutorial_finished = True
     st.rerun()
