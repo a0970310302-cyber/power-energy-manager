@@ -76,8 +76,7 @@ def show_tutorial_page():
         # ==========================================
         if st.session_state.tutorial_step == 1:
             st.markdown("### ⚡ 歡迎啟動「智慧電能管家」")
-            # [修正] 首席財務官 -> 家庭能源精算師 (更親民且專業)
-            st.markdown("##### —— 您的家庭能源精算師")
+            st.markdown("##### —— 兼具節能與預算的得力助手")
             
             st.info("""
             **「為什麼帳單總是遲到的壞消息？」**
