@@ -125,6 +125,16 @@ def initialize_system():
 def main():
     # 1. 側邊欄導航
     with st.sidebar:
+        if st.session_state.page != "tutorial":
+            from streamlit_lottie import st_lottie
+            from app_utils import load_lottiefile
+        
+            loading_lottie = load_lottiefile("lottiefiles/loading_animation.json")
+            if loading_lottie:
+            # 設定較小的高度使其像一個 Logo 或狀態圖示
+                st_lottie(loading_lottie, speed=1, loop=True, height=120, key="sidebar_loading")
+        
+            st.write("---") # 分隔線
         st.title("⚡ 功能選單")
         
         if st.button("🏠 首頁總覽", use_container_width=True):
