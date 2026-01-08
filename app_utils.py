@@ -150,7 +150,8 @@ def load_data():
         return df[['power_kW', 'temperature', 'humidity']]
     except:
         return pd.DataFrame()
-
+    
+@st.cache_data
 def load_lottiefile(filepath):
     try:
         with open(filepath, "r", encoding='utf-8') as f: return json.load(f)
