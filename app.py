@@ -129,7 +129,7 @@ def main():
             from streamlit_lottie import st_lottie
             from app_utils import load_lottiefile
         
-            loading_lottie = load_lottiefile("lottiefiles/loading_animation.json")
+            loading_lottie = load_lottiefile("Intelligent_tour_guide_robot.json")
             if loading_lottie:
             # 設定較小的高度使其像一個 Logo 或狀態圖示
                 st_lottie(loading_lottie, speed=1, loop=True, height=120, key="sidebar_loading")
