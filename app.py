@@ -123,16 +123,11 @@ def initialize_system():
 # 🚀 主程式進入點
 # ==========================================
 def main():
-    # 1. 初始化所有狀態 (確保不會因為 null 報錯)
     if 'page' not in st.session_state:
         st.session_state.page = "tutorial"  # 強制預設為導覽
     if 'tutorial_finished' not in st.session_state:
         st.session_state.tutorial_finished = False
 
-    st.sidebar.write(f"Debug - Current Page: {st.session_state.page}")
-    st.sidebar.write(f"Debug - Tutorial Done: {st.session_state.tutorial_finished}")
-
-    # 3. 頁面導航邏輯
     if not st.session_state.tutorial_finished:
         show_tutorial_page()
     elif st.session_state.page == "home":
