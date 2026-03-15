@@ -33,28 +33,49 @@ logging.basicConfig(
     ]
 )
 
-# ==========================================
-# 🚀 階段一：雲端數據同步 (Cloud Sync)
-# ==========================================
 def sync_cloud_to_pantry():
     logging.info("="*50)
-    logging.info("🚩 [Step 1] 啟動雲端數據格式化與同步")
+    logging.info("🚩 [Step 1] 啟動雲端數據格式化與同步 (Debug Mode)")
     logging.info("="*50)
     
     try:
+        # 1. 檢查網址環境變數
+        url_len = len(JSON_SOURCE_URL) if JSON_SOURCE_URL else 0
+        logging.info(f"🔍 [Debug] JSON_SOURCE_URL 長度: {url_len}")
+        if url_len > 10:
+            logging.info(f"🔍 [Debug] 網址開頭前 15 字元: {JSON_SOURCE_URL[:15]}...")
+        
         logging.info("📡 正在請求 JsonStorage...")
         source_res = requests.get(JSON_SOURCE_URL)
+        logging.info(f"🔍 [Debug] HTTP 回傳狀態碼: {source_res.status_code}")
+        
+        if source_res.status_code != 200:
+            logging.error(f"❌ [Debug] 請求失敗，內容為: {source_res.text[:200]}")
+            return False
+
         raw_json = source_res.json()
         data_block = raw_json.get("data", {})
         
+        # 2. 檢查 JSON 結構裡的 Key
+        all_keys = list(data_block.keys())
+        logging.info(f"🔍 [Debug] 找到的日期 Key 數量: {len(all_keys)}")
+        if all_keys:
+            logging.info(f"🔍 [Debug] 前 3 個 Key 範例: {all_keys[:3]}")
+        
         formatted_new_data = {}
-        processed_dates = set() # 記錄今天處理了哪些日期
+        processed_dates = set()
         
         for date_key, date_content in data_block.items():
-            if not date_key.startswith("202"): continue
-            processed_dates.add(date_key)
+            # 3. 檢查日期過濾條件
+            if not date_key.startswith("202"): 
+                continue
             
+            processed_dates.add(date_key)
             data_list = date_content.get("listAMIBase15MinData", [])
+            
+            # 只有抓到當天資料時才印出細節，避免 Log 太長
+            if len(data_list) > 0:
+                 logging.info(f"📊 [Debug] 處理日期 {date_key}: 原始資料共 {len(data_list)} 筆")
             
             # 反向掃描，尋找最後一筆「真正有效」的數據索引
             last_valid_idx = -1
