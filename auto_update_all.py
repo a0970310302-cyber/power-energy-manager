@@ -95,7 +95,7 @@ def sync_cloud_to_pantry():
                 formatted_new_data[f"{date_key} {time_str}:00"] = power_val
         
         if not formatted_new_data:
-            logging.error("❌ 來源中找不到任何有效電力數據，同步終止。")
+            logging.info("✨ 目前時段無有效電力數據（可能為資料源更新中），任務結束。")
             return False
 
         # 讀取 Pantry 現有資料
