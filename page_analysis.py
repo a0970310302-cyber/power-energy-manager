@@ -208,7 +208,7 @@ def show_analysis_page():
         report = get_billing_report(df_history)
         current_proj_cost = report['predicted_bill']
         
-        target = st.number_input("設定本月電費目標 (元)", value=3000, step=100)
+        target = st.number_input("設定本月電費目標 (元)", value=1000, step=100)
         
         col_t1, col_t2 = st.columns(2)
         col_t1.metric("本月目標", f"${target:,}")

@@ -5,15 +5,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np 
+import time  # 🌟 用於計算運算耗時
 
 # 匯入共用函式
 from app_utils import load_data, get_core_kpis, get_billing_report, get_current_bill_cycle
+from model_service import load_resources_and_predict
 
 def show_dashboard_page():
     """
     顯示「用電儀表板」的內容
     """
     # --- 1. 資料獲取 ---
+    # 優先從 session_state 獲取數據以維持快取一致性
     if "current_data" in st.session_state and st.session_state.current_data is not None:
         df_history = st.session_state.current_data
         data_source_msg = "🟢 即時數據 (Live Data)"
@@ -25,6 +28,7 @@ def show_dashboard_page():
         st.warning("儀表板無資料可顯示。")
         return
 
+    # 計算基礎用電指標
     kpis = get_core_kpis(df_history)
 
     st.title("💡 智慧電能管家")
@@ -34,7 +38,7 @@ def show_dashboard_page():
         st.warning("資料量不足，部分指標可能無法計算。")
 
     # ==========================================
-    # 區塊 1: 帳單監控
+    # 區塊 1: 帳單預算監控
     # ==========================================
     st.header("💰 帳單預算監控")
     report = get_billing_report(df_history)
@@ -46,10 +50,9 @@ def show_dashboard_page():
     
     delta_val = report['predicted_bill'] - report['budget']
     delta_msg = f"超支 {delta_val:,} 元" if delta_val > 0 else f"省下 {abs(delta_val):,} 元"
-    delta_color = "inverse"
     
     c2.metric("🔮 AI 預估結算 (本期)", f"NT$ {report['predicted_bill']:,}", 
-              delta=delta_msg, delta_color=delta_color)
+              delta=delta_msg, delta_color="inverse")
 
     usage_percent = report['usage_percent']
     st.write(f"**預算消耗進度 (目標：NT$ {report['budget']:,})**")
@@ -64,7 +67,7 @@ def show_dashboard_page():
     st.divider()
 
     # ==========================================
-    # 區塊 2: 即時用電
+    # 區塊 2: 即時用電狀態
     # ==========================================
     st.subheader("⚡ 即時用電狀態")
     k1, k2, k3, k4 = st.columns(4)
@@ -76,132 +79,130 @@ def show_dashboard_page():
     st.divider()
 
     # ==========================================
-    # 區塊 3: 滾動預測趨勢圖 (升級版：分段式信心區間)
+    # 區塊 3: 滾動預測趨勢圖 (動態範圍與效能監測)
     # ==========================================
-    st.subheader("📈 雙月滾動式修正趨勢 (全週期監控)")
+    st.subheader("📈 預測趨勢與效能評估")
     
-    tab1, tab2 = st.tabs(["預測 vs 真實", "詳細歷史數據"])
+    # --- 3.1 參數計算 ---
+    latest_time = df_history.index[-1]
+    cycle_start, cycle_end = get_current_bill_cycle(latest_time)
+    hours_to_end = int((cycle_end - latest_time).total_seconds() // 3600)
     
-    with tab1:
-        # 1. 取得當期帳單週期
-        latest_time = df_history.index[-1]
-        cycle_start, cycle_end = get_current_bill_cycle(latest_time)
-        
-        # 2. 準備歷史資料 (鎖定本週期)
-        df_hist_plot = df_history[(df_history.index >= cycle_start) & (df_history.index <= cycle_end)].copy()
-        
-        # 清理無效值
-        if not df_hist_plot.empty:
-            while not df_hist_plot.empty and (df_hist_plot.iloc[-1]['power_kW'] <= 0):
-                df_hist_plot = df_hist_plot.iloc[:-1]
+    # --- 3.2 互動選單與對齊優化 ---
+    # 使用 vertical_alignment="bottom" 確保下拉選單與右側按鈕水平對齊
+    col_sel, col_status = st.columns([2, 1], vertical_alignment="bottom")
+    
+    with col_sel:
+        view_option = st.selectbox(
+            "選擇預測顯示範圍：",
+            ["48 小時 (短期)", "7 天 (168小時)", "本期結算日 (直到截止)"],
+            index=0,
+            help="選擇不同的時間跨度，查看 AI 模擬的電力走勢。"
+        )
+    
+    # 映射選單到目標步數
+    step_map = {
+        "48 小時 (短期)": 48,
+        "7 天 (168小時)": 168,
+        "本期結算日 (直到截止)": hours_to_end
+    }
+    target_steps = step_map[view_option]
+    
+    # 檢查 session 中已存在的預測數據長度
+    current_pred_df = st.session_state.get("prediction_result", None)
+    current_len = len(current_pred_df) if current_pred_df is not None else 0
 
-        # 轉為繪圖格式
+    with col_status:
+        # 情況 A：數據不足，顯示執行按鈕
+        if current_len < target_steps:
+            if st.button(f"🚀 執行深度預測 ({target_steps}h)", use_container_width=True, type="primary"):
+                start_time = time.time()  # 開始計時
+                with st.spinner(f"AI 核心運算中..."):
+                    new_pred, _ = load_resources_and_predict(steps=target_steps)
+                    st.session_state.prediction_result = new_pred
+                
+                end_time = time.time()  # 結束計時
+                duration = end_time - start_time
+                st.session_state.last_calc_time = duration # 存入 session 以便顯示
+                st.rerun()
+        # 情況 B：數據充足，顯示成功狀態
+        else:
+            st.success("數據已就緒", icon="✅")
+
+    # 顯示上一次運算的耗時資訊（若存在）
+    if "last_calc_time" in st.session_state:
+        st.caption(f"⏱️ 最近一次 AI 深度運算耗時：{st.session_state.last_calc_time:.2f} 秒")
+
+    # --- 3.3 圖表繪製 ---
+    tab_chart, tab_data = st.tabs(["趨勢圖表", "詳細歷史數據"])
+    
+    with tab_chart:
+        # A. 準備歷史數據 (從帳單週期開始到現在)
+        df_hist_plot = df_history[(df_history.index >= cycle_start)].copy()
         plot_data = []
         
-        # A. 加入歷史數據
         if not df_hist_plot.empty:
-            hist_data = df_hist_plot[['power_kW']].reset_index()
-            hist_data.columns = ['time', 'value']
-            hist_data['type'] = '歷史實績 (Actual)'
-            plot_data.append(hist_data)
-            
-            # 取得最後一個歷史點，作為預測線的起點 (確保線條連續)
-            last_hist_point = hist_data.iloc[[-1]].copy()
-        else:
-            last_hist_point = None
-
-        # B. 準備預測資料 (進行分流：短期 vs 長期)
-        if "prediction_result" in st.session_state and st.session_state.prediction_result is not None:
-            pred_res = st.session_state.prediction_result.copy()
-            # 篩選本週期
-            pred_res = pred_res[(pred_res.index >= cycle_start) & (pred_res.index <= cycle_end)]
-            
-            if not pred_res.empty:
-                # 定義短期界線：未來 48 小時
-                short_term_end = latest_time + timedelta(hours=48)
+            # 清理末尾可能的異常 0 值 (若有)
+            while not df_hist_plot.empty and (df_hist_plot.iloc[-1]['power_kW'] <= 0):
+                df_hist_plot = df_hist_plot.iloc[:-1]
                 
-                # --- B1. 短期預測 (高信心區) ---
-                pred_short = pred_res[pred_res.index <= short_term_end]
-                if not pred_short.empty:
-                    short_data = pred_short[['預測值']].reset_index()
-                    short_data.columns = ['time', 'value']
-                    short_data['type'] = 'AI 短期預測 (48h)'
-                    
-                    # 縫合歷史與短期
-                    if last_hist_point is not None:
-                        connector = last_hist_point.copy()
-                        connector['type'] = 'AI 短期預測 (48h)'
-                        short_data = pd.concat([connector, short_data])
-                    
-                    plot_data.append(short_data)
-                    last_short_point = short_data.iloc[[-1]].copy()
-                else:
-                    last_short_point = last_hist_point
+            h_data = df_hist_plot[['power_kW']].reset_index()
+            h_data.columns = ['time', 'value']
+            h_data['type'] = '歷史實績 (Actual)'
+            plot_data.append(h_data)
 
-                # --- B2. 長期推估 (趨勢參考區) ---
-                pred_long = pred_res[pred_res.index > short_term_end]
-                if not pred_long.empty:
-                    long_data = pred_long[['預測值']].reset_index()
-                    long_data.columns = ['time', 'value']
-                    long_data['type'] = '長期趨勢推估 (Trend)'
-                    
-                    # 縫合短期與長期
-                    if last_short_point is not None:
-                        connector = last_short_point.copy()
-                        connector['type'] = '長期趨勢推估 (Trend)'
-                        long_data = pd.concat([connector, long_data])
-                        
-                    plot_data.append(long_data)
-
-        # 3. 繪圖
-        if plot_data:
-            df_chart = pd.concat(plot_data)
+        # B. 準備預測數據並處理「連線縫合」
+        if st.session_state.get("prediction_result") is not None:
+            pred_res = st.session_state.prediction_result.copy()
             
-            # 定義顏色與線條樣式
-            color_map = {
-                '歷史實績 (Actual)': '#00CC96',       # 綠色
-                'AI 短期預測 (48h)': '#EF553B',       # 深紅色
-                '長期趨勢推估 (Trend)': '#FFA15A'     # 橘黃色
-            }
-            dash_map = {
-                '歷史實績 (Actual)': 'solid',
-                'AI 短期預測 (48h)': 'dot',
-                '長期趨勢推估 (Trend)': 'dash'
-            }
+            # 根據使用者選取的範圍過濾顯示數據
+            display_end = latest_time + timedelta(hours=target_steps)
+            pred_res = pred_res[pred_res.index <= display_end]
+            
+            p_data = pred_res[['預測值']].reset_index()
+            p_data.columns = ['time', 'value']
+            p_data['type'] = 'AI 預測 (Forecast)'
+            
+            # 🌟 縫合邏輯：抓取歷史最後一點作為預測線的起點，消除斷點
+            if not df_hist_plot.empty:
+                last_hist_point = h_data.iloc[[-1]].copy()
+                last_hist_point['type'] = 'AI 預測 (Forecast)'
+                p_data = pd.concat([last_hist_point, p_data]).reset_index(drop=True)
+            
+            plot_data.append(p_data)
 
-            fig = px.line(df_chart, x='time', y='value', color='type', 
+        # C. 渲染 Plotly 圖表
+        if plot_data:
+            df_final_chart = pd.concat(plot_data)
+            
+            color_map = {
+                '歷史實績 (Actual)': '#00CC96', # 翠綠
+                'AI 預測 (Forecast)': '#EF553B' # 鮮紅
+            }
+            
+            fig = px.line(df_final_chart, x='time', y='value', color='type',
                           color_discrete_map=color_map,
-                          line_dash='type',
-                          line_dash_map=dash_map,
-                          title=f"帳單週期全程監控 ({cycle_start.strftime('%m/%d')} ~ {cycle_end.strftime('%m/%d')})",
+                          title=f"電力滾動趨勢 ({view_option})",
                           template="plotly_dark")
             
-            # [修正] 修改 Y 軸標籤為明確單位
-            fig.update_layout(yaxis_title="功率 (kW)")
-
-            # 強制鎖定 X 軸範圍
-            fig.update_xaxes(range=[cycle_start, cycle_end])
+            fig.update_traces(mode='lines+markers', marker=dict(size=4)) # 讓預測與歷史都顯示點
             
-            # 標示 "Now"
+            fig.update_layout(
+                xaxis_title="時間",
+                yaxis_title="功率 (kW)",
+                legend_title="數據類型",
+                hovermode="x unified"
+            )
+            
+            # 強制鎖定 X 軸範圍，確保選單切換時縮放正確
+            fig.update_xaxes(range=[latest_time - timedelta(days=3), latest_time + timedelta(hours=target_steps)])
+            
+            # 加入「現在時間」垂直線
             fig.add_vline(x=latest_time.timestamp() * 1000, line_width=1, line_dash="solid", line_color="white")
             
             st.plotly_chart(fig, use_container_width=True)
-            
-            st.info(f"""
-            ℹ️ **圖表說明**：
-            * **綠線**：已發生的真實用電。
-            * **紅點線**：AI 針對未來 48 小時的高解析度預測。
-            * **橘虛線**：依據歷史氣候大數據推算至結算日 ({cycle_end.strftime('%m/%d')}) 的參考走勢。
-            """)
-            
         else:
-            st.info("尚無本期數據。")
-        
-        with st.expander("ℹ️ 技術原理：Hybrid Architecture"):
-            st.write("""
-            本系統採用 **長短週期混合運算架構**。
-            短期預測採用 **LSTM** 捕捉生活作息波動，長期推估則引入 **歷史氣候大數據** 進行趨勢校正。
-            """)
+            st.info("尚無足夠數據繪製趨勢圖。")
 
-    with tab2:
-        st.dataframe(df_history.tail(100))
+    with tab_data:
+        st.dataframe(df_history.tail(100), use_container_width=True)

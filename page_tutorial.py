@@ -2,6 +2,7 @@
 import streamlit as st
 import time
 import threading
+import traceback # [修改點 1] 引入 traceback 來獲取最完整的錯誤追蹤訊息
 from streamlit_lottie import st_lottie
 from app_utils import load_lottiefile
 from model_service import load_resources_and_predict
@@ -15,6 +16,7 @@ class BackgroundWorker:
         self.history = None
         self.is_done = False
         self.is_running = False
+        self.error_msg = None # [修改點 2] 新增 error_msg 屬性，用來將錯誤安全傳遞給主執行緒
 
     def run_task(self):
         self.is_running = True
@@ -24,7 +26,10 @@ class BackgroundWorker:
             self.history = hist_df
             self.is_done = True
         except Exception as e:
-            print(f"Background Task Error: {e}")
+            # [修改點 3] 捕捉完整錯誤軌跡，不僅 print 出來，也存入 error_msg
+            error_details = traceback.format_exc()
+            print(f"Background Task Error:\n{error_details}")
+            self.error_msg = error_details 
             self.is_done = True 
         finally:
             self.is_running = False
@@ -72,7 +77,7 @@ def show_tutorial_page():
     with col_content:
         
         # ==========================================
-        # Step 1: 核心價值 (修正角色定位與用語)
+        # Step 1: 核心價值
         # ==========================================
         if st.session_state.tutorial_step == 1:
             st.markdown("### ⚡ 歡迎啟動「智慧電能管家」")
@@ -92,7 +97,14 @@ def show_tutorial_page():
             """)
             
             st.write("#")
-            if st.button("下一步：解密 AI 核心技術 ➔", type="primary", use_container_width=True):
+            # 🌟 核心修改：建立兩欄按鈕，左邊是跳過，右邊是下一步
+            c1, c2 = st.columns([1, 2]) 
+            
+            if c1.button("跳過導覽", use_container_width=True):
+                st.session_state.tutorial_step = "loading" # 直接進入資料載入階段
+                st.rerun()
+
+            if c2.button("下一步：解密 AI 核心技術 ➔", type="primary", use_container_width=True):
                 st.session_state.tutorial_step = 2
                 st.rerun()
 
@@ -101,7 +113,6 @@ def show_tutorial_page():
         # ==========================================
         elif st.session_state.tutorial_step == 2:
             st.markdown("### 🧠 獨家 Hybrid AI 架構")
-            # [修正] 移除「唯一」、「模擬」等敏感字
             st.markdown("""
             市面上的 APP 多顯示歷史，**我們是少數能推算未來的系統。**
             我們採用 **「長短週期混合運算架構」** 來確保預測的穩定性：
@@ -111,7 +122,6 @@ def show_tutorial_page():
                 st.write("針對 **未來 48 小時** 進行高解析度運算。精準捕捉家電開啟的瞬間波動，反映您的真實作息。")
                 
             with st.expander("🟠 橘線：長期趨勢推估系統", expanded=True):
-                # [修正] WeatherSimulator -> 歷史氣候大數據
                 st.write("引入 **歷史氣候大數據**，對照過去三年的氣溫模型，推算直到 **結算日** 的最終帳單趨勢。")
 
             st.markdown("---")
@@ -267,6 +277,22 @@ def show_fullscreen_loading():
     my_bar.progress(100, text="數據視覺化渲染完成！")
     time.sleep(0.5)
 
+    # [修改點 4] UI 迴圈結束後，第一時間攔截並顯示背景任務的錯誤！
+    if worker.error_msg is not None:
+        st.session_state.error_msg = worker.error_msg # 依要求存入 session_state
+        st.error("🚨 **AI 核心運算發生嚴重錯誤！**")
+        with st.expander("點此查看詳細錯誤日誌 (開發者專用)", expanded=True):
+            st.code(worker.error_msg, language="python")
+        
+        if st.button("🔄 重置並退回導覽頁"):
+            # 清除壞掉的 worker 讓它有機會重來
+            del st.session_state.bg_worker 
+            st.session_state.tutorial_step = 4
+            st.rerun()
+            
+        st.stop() # 強制停止渲染，絕對不跳轉到空的主頁
+
+    # 若無錯誤，則正常載入並跳轉
     if worker.result is not None:
         st.session_state.prediction_result = worker.result
         st.session_state.current_data = worker.history

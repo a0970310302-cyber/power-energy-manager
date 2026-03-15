@@ -99,7 +99,7 @@ def show_home_page():
 
     # --- 3. 快速入口 ---
     st.subheader("🚀 快速功能")
-    q1, q2, q3, q4 = st.columns(4)
+    q1, q2, q3 = st.columns(3)
     
     if q1.button("📊 詳細儀表板", use_container_width=True):
         st.session_state.page = "dashboard"
@@ -113,6 +113,3 @@ def show_home_page():
         # 觸發重新載入
         st.session_state.app_ready = False
         st.rerun()
-             
-    if q4.button("🔔 測試 Line 通知", help="發送測試訊息到綁定的 Line 群組", use_container_width=True):
-        st.toast("已發送測試警報！")
