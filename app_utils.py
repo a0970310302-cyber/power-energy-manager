@@ -13,7 +13,7 @@ import streamlit as st
 # ==========================================
 # ⚙️ 全域設定與常數
 # ==========================================
-# [修正] 根據真實帳單校正後的倍率
+# 根據真實帳單校正後的倍率
 DESIGN_PEAK_LOAD_KW = 3.6
 
 CSV_FILE_PATH = "final_training_data_with_humidity.csv"
@@ -25,24 +25,16 @@ MODEL_FILES = {
     "history_data": "final_training_data_with_humidity.csv"
 }
 
-# app_utils.py
-
 def get_current_bill_cycle(current_date=None):
     """
     計算當前日期所屬的帳單週期 (奇數月結算制)
-    修正版：解決 12月 跨年導致月份 13 的錯誤
+    解決 12月 跨年導致月份 13 的錯誤
     """
     if current_date is None:
         current_date = datetime.now()
     
     year = current_date.year
     month = current_date.month
-    
-    # 判斷邏輯：
-    # 1月 -> 屬於 "去年12月 ~ 今年1月"
-    # 12月 -> 屬於 "今年12月 ~ 明年1月" (偶數月起始)
-    # 其他偶數月 (2,4,6...) -> 屬於 "該月 ~ 下個月"
-    # 其他奇數月 (3,5,7...) -> 屬於 "上個月 ~ 該月"
     
     if month == 1:
         start_year = year - 1
@@ -126,30 +118,50 @@ def get_rate_config(date_obj):
     else: return RATES_DB["2025"]
 
 # ==========================================
-# 📥 資料載入
+# 📥 資料載入 (已統一資料源)
 # ==========================================
+@st.cache_data(ttl=3600) # 🌟 核心修改：快取 1 小時，避免重複讀取磁碟與重複處理資料邏輯
 def load_data():
-    if not os.path.exists(CSV_FILE_PATH): return pd.DataFrame()
+    """
+    從本地 CSV 讀取並清洗資料。
+    使用 st.cache_data 確保全域只有一份處理好的 DataFrame。
+    """
+    if not os.path.exists(CSV_FILE_PATH): 
+        return pd.DataFrame()
     try:
+        # 只在第一次執行時會讀取磁碟
         df = pd.read_csv(CSV_FILE_PATH)
-        if 'datetime' in df.columns: df['timestamp'] = pd.to_datetime(df['datetime'], errors='coerce')
-        elif 'timestamp' in df.columns: df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-        else: return pd.DataFrame()
+        
+        # 統一時間 index
+        if 'datetime' in df.columns: 
+            df['timestamp'] = pd.to_datetime(df['datetime'], errors='coerce')
+        elif 'timestamp' in df.columns: 
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        else: 
+            return pd.DataFrame()
 
         df = df.dropna(subset=['timestamp']).set_index('timestamp').sort_index()
-        if 'power' in df.columns: df = df.rename(columns={'power': 'power_kW'})
-        if 'power_kW' in df.columns: df['power_kW'] = pd.to_numeric(df['power_kW'], errors='coerce')
         
-        # [Reality Booster] 放大倍率
-        # 修正邏輯：如果數值非常小 (例如 < 0.2)，才進行放大，避免誤判
-        if df['power_kW'].mean() < 0.2:
-            df['power_kW'] = df['power_kW'] * DESIGN_PEAK_LOAD_KW
+        # 雙向欄位綁定與數值轉換
+        if 'power' in df.columns and 'power_kW' not in df.columns:
+            df['power_kW'] = df['power']
+        elif 'power_kW' in df.columns and 'power' not in df.columns:
+            df['power'] = df['power_kW']
             
-        df['power_kW'] = df['power_kW'].ffill().bfill()
+        df['power'] = pd.to_numeric(df['power'], errors='coerce')
+        df['power'] = df['power'].ffill().bfill()
+        df['power_kW'] = df['power']
+        
+        # 氣象特徵填補
         if 'temperature' not in df.columns: df['temperature'] = 25.0
         if 'humidity' not in df.columns: df['humidity'] = 70.0
-        return df[['power_kW', 'temperature', 'humidity']]
-    except:
+        df['temperature'] = df['temperature'].ffill().bfill()
+        df['humidity'] = df['humidity'].ffill().bfill()
+        
+        print("✅ [Cache Miss] 成功從 CSV 讀取並處理資料")
+        return df
+    except Exception as e:
+        print(f"❌ Error in load_data: {e}")
         return pd.DataFrame()
     
 @st.cache_data
@@ -243,19 +255,16 @@ def get_billing_report(df, budget=3000):
     
     latest_time = df.index[-1]
     
-    # [修正] 使用 get_current_bill_cycle 鎖定真實雙月週期
     cycle_start, cycle_end = get_current_bill_cycle(latest_time)
     
-    # 篩選出本期資料 (包含歷史 + 預測)
     df_period = df[(df.index >= cycle_start) & (df.index <= cycle_end)]
     
     if df_period.empty: return default
     
     res, _ = analyze_pricing_plans(df_period)
-    total_bill_projected = res['cost_progressive'] # 這已經包含預測到月底的量
+    total_bill_projected = res['cost_progressive'] 
     total_tou_projected = res['cost_tou']
     
-    # 計算目前已發生的費用 (只算到今天)
     df_actual = df_period[df_period.index <= datetime.now()]
     if not df_actual.empty:
         res_actual, _ = analyze_pricing_plans(df_actual)
@@ -271,9 +280,13 @@ def get_billing_report(df, budget=3000):
     elif pred_bill > budget * 0.9: status = "warning"
     
     recommendation = ""
-    if savings > 150: recommendation = f"建議切換時間電價，本期預計可省 ${int(savings):,} 元"
-    elif savings < -100: recommendation = f"累進費率目前最優，切換反而貴 ${int(abs(savings)):,} 元"
-    else: recommendation = "目前方案合適"
+    if savings > 30: 
+        recommendation = f"建議切換時間電價，本期預計可省 ${int(savings):,} 元"
+    elif savings < -30: 
+        recommendation = f"累進費率目前最優，切換反而貴 ${int(abs(savings)):,} 元"
+    else: 
+        recommendation = "目前方案合適，無顯著價差"
+
 
     return {
         "period": f"{cycle_start.strftime('%Y-%m-%d')} ~ {cycle_end.strftime('%Y-%m-%d')}",
@@ -314,7 +327,7 @@ def get_core_kpis(df):
         usage_prev_7d = df[(df.index > fourteen_days_ago) & (df.index <= seven_days_ago)]['power_kW'].sum() * time_factor
         
         weekly_delta = 0
-        if usage_prev_7d > 0.1: # 避免除以零或過小數值
+        if usage_prev_7d > 0.1: 
             weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
 
         return {
