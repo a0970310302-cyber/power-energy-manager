@@ -4,7 +4,7 @@ pandas
 numpy
 requests
 joblib
-scikit-learn
+scikit-learn==1.8.0
 plotly
 lightgbm
 tensorflow-cpu==2.15.0
