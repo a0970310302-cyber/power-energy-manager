@@ -26,7 +26,7 @@ def run_offline_inference():
     latest_time = hist_df.index[-1]
     _, cycle_end = get_current_bill_cycle(latest_time)
     hours_to_end = int((cycle_end - latest_time).total_seconds() // 3600)
-    max_target_steps = max(168, hours_to_end)
+    max_target_steps = max(1440, hours_to_end)
     
     # 3. 載入模型並預測
     service = ModelService()

@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np 
-import time  # 🌟 用於計算運算耗時
+import time
 
 # 匯入共用函式
 from app_utils import load_data, get_core_kpis, get_billing_report, get_current_bill_cycle
@@ -16,7 +16,6 @@ def show_dashboard_page():
     顯示「用電儀表板」的內容
     """
     # --- 1. 資料獲取 ---
-    # 優先從 session_state 獲取數據以維持快取一致性
     if "current_data" in st.session_state and st.session_state.current_data is not None:
         df_history = st.session_state.current_data
         data_source_msg = "🟢 即時數據 (Live Data)"
@@ -32,16 +31,38 @@ def show_dashboard_page():
     kpis = get_core_kpis(df_history)
 
     st.title("💡 智慧電能管家")
-    st.caption(f"{data_source_msg} | Hybrid AI 運算引擎：Online") 
+    st.caption(f"{data_source_msg} | Hybrid AI 運算引擎：Online (Offline Inference)") 
 
     if not kpis['status_data_available']:
         st.warning("資料量不足，部分指標可能無法計算。")
+    
+    # 🌟 嘗試讀取離線預測快取 (全域共用)
+    try:
+        pred_cache = pd.read_csv("prediction_cache.csv")
+        pred_cache['datetime'] = pd.to_datetime(pred_cache['datetime'])
+        pred_cache = pred_cache.set_index('datetime')
+        st.session_state.prediction_result = pred_cache
+        data_ready = True
+        
+        # 將 AI 預測的欄位重新命名以符合 app_utils 的計算格式
+        pred_for_bill = pred_cache.copy()
+        pred_for_bill['power_kW'] = pred_for_bill['預測值']
+        
+        # 將歷史資料與 AI 預測資料拼接成完整的一期資料
+        df_combined = pd.concat([df_history, pred_for_bill[['power_kW']]])
+        
+    except FileNotFoundError:
+        st.session_state.prediction_result = None
+        data_ready = False
+        df_combined = df_history 
 
     # ==========================================
     # 區塊 1: 帳單預算監控
     # ==========================================
     st.header("💰 帳單預算監控")
-    report = get_billing_report(df_history)
+    
+    # 🌟 這裡傳入拼接好的 df_combined (包含歷史+未來預測)
+    report = get_billing_report(df_combined)
     
     st.info(f"📅 **本期帳單週期： {report['period']}**")
     
@@ -77,6 +98,7 @@ def show_dashboard_page():
     k4.metric("本期累積用量", f"{kpis['kwh_this_month_so_far']:.1f} kWh")
 
     st.divider()
+    
     # ==========================================
     # 區塊 3: 滾動預測趨勢圖 (動態範圍與效能監測)
     # ==========================================
@@ -84,39 +106,36 @@ def show_dashboard_page():
     
     latest_time = df_history.index[-1]
     
-    # --- 嘗試讀取離線預測快取 ---
-    try:
-        # 直接讀取背景算好的 CSV
-        pred_cache = pd.read_csv("prediction_cache.csv")
-        pred_cache['datetime'] = pd.to_datetime(pred_cache['datetime'])
-        pred_cache = pred_cache.set_index('datetime')
-        st.session_state.prediction_result = pred_cache
-        data_ready = True
-    except FileNotFoundError:
-        st.session_state.prediction_result = None
-        data_ready = False
-
     # --- 互動選單 ---
     col_sel, col_status = st.columns([2, 1], vertical_alignment="bottom")
     with col_sel:
         view_option = st.selectbox(
             "選擇預測顯示範圍：",
-            ["48 小時 (短期)", "7 天 (168小時)", "本期結算日 (直到截止)"],
+            [
+                "48 小時 (短期)", 
+                "7 天 (168小時)", 
+                "1 個月 (約30天)",     # 🌟 新增 1 個月
+                "2 個月 (約60天)",     # 🌟 新增 2 個月
+                "本期結算日 (直到截止)" # 依你的要求，放在這兩個的下方
+            ],
             index=0
         )
     
-    # 映射選單到目標步數 (前端只負責決定顯示範圍，不負責運算)
+    # 映射選單到目標步數
     cycle_start, cycle_end = get_current_bill_cycle(latest_time)
     hours_to_end = int((cycle_end - latest_time).total_seconds() // 3600)
     
     step_map = {
         "48 小時 (短期)": 48,
         "7 天 (168小時)": 168,
+        "1 個月 (約30天)": 720,        # 🌟 30天 * 24小時 = 720
+        "2 個月 (約60天)": 1440,       # 🌟 60天 * 24小時 = 1440
         "本期結算日 (直到截止)": hours_to_end
     }
     view_steps = step_map[view_option]
 
     with col_status:
+        # 🌟 直接使用前面判定過的 data_ready 狀態
         if data_ready:
             st.success("⚡ AI 預測數據已就緒 (Offline Inference)", icon="✅")
         else:
@@ -126,12 +145,10 @@ def show_dashboard_page():
     tab_chart, tab_data = st.tabs(["趨勢圖表", "詳細歷史數據"])
     
     with tab_chart:
-        # A. 準備歷史數據 (從帳單週期開始到現在)
         df_hist_plot = df_history[(df_history.index >= cycle_start)].copy()
         plot_data = []
         
         if not df_hist_plot.empty:
-            # 清理末尾可能的異常 0 值 (若有)
             while not df_hist_plot.empty and (df_hist_plot.iloc[-1]['power_kW'] <= 0):
                 df_hist_plot = df_hist_plot.iloc[:-1]
                 
@@ -140,11 +157,9 @@ def show_dashboard_page():
             h_data['type'] = '歷史實績 (Actual)'
             plot_data.append(h_data)
 
-        # B. 準備預測數據並處理「連線縫合」
         if st.session_state.get("prediction_result") is not None:
             pred_res = st.session_state.prediction_result.copy()
             
-            # 根據使用者選取的範圍過濾顯示數據
             display_end = latest_time + timedelta(hours=view_steps)
             pred_res = pred_res[pred_res.index <= display_end]
             
@@ -152,7 +167,6 @@ def show_dashboard_page():
             p_data.columns = ['time', 'value']
             p_data['type'] = 'AI 預測 (Forecast)'
             
-            # 🌟 縫合邏輯：抓取歷史最後一點作為預測線的起點，消除斷點
             if not df_hist_plot.empty:
                 last_hist_point = h_data.iloc[[-1]].copy()
                 last_hist_point['type'] = 'AI 預測 (Forecast)'
@@ -160,13 +174,12 @@ def show_dashboard_page():
             
             plot_data.append(p_data)
 
-        # C. 渲染 Plotly 圖表
         if plot_data:
             df_final_chart = pd.concat(plot_data)
             
             color_map = {
-                '歷史實績 (Actual)': '#00CC96', # 翠綠
-                'AI 預測 (Forecast)': '#EF553B' # 鮮紅
+                '歷史實績 (Actual)': '#00CC96', 
+                'AI 預測 (Forecast)': '#EF553B' 
             }
             
             fig = px.line(df_final_chart, x='time', y='value', color='type',
@@ -174,7 +187,7 @@ def show_dashboard_page():
                           title=f"電力滾動趨勢 ({view_option})",
                           template="plotly_dark")
             
-            fig.update_traces(mode='lines+markers', marker=dict(size=4)) # 讓預測與歷史都顯示點
+            fig.update_traces(mode='lines+markers', marker=dict(size=4)) 
             
             fig.update_layout(
                 xaxis_title="時間",
@@ -183,10 +196,8 @@ def show_dashboard_page():
                 hovermode="x unified"
             )
             
-            # 強制鎖定 X 軸範圍，確保選單切換時縮放正確
             fig.update_xaxes(range=[latest_time - timedelta(days=3), latest_time + timedelta(hours=view_steps)])
             
-            # 加入「現在時間」垂直線
             fig.add_vline(x=latest_time.timestamp() * 1000, line_width=1, line_dash="solid", line_color="white")
             
             st.plotly_chart(fig, use_container_width=True)
