@@ -7,4 +7,4 @@ joblib
 scikit-learn
 plotly
 lightgbm
-tensorflow-cpu
+tensorflow==2.15.0
