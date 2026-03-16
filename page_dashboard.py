@@ -77,61 +77,50 @@ def show_dashboard_page():
     k4.metric("本期累積用量", f"{kpis['kwh_this_month_so_far']:.1f} kWh")
 
     st.divider()
-
     # ==========================================
     # 區塊 3: 滾動預測趨勢圖 (動態範圍與效能監測)
     # ==========================================
     st.subheader("📈 預測趨勢與效能評估")
     
-    # --- 3.1 參數計算 ---
     latest_time = df_history.index[-1]
-    cycle_start, cycle_end = get_current_bill_cycle(latest_time)
-    hours_to_end = int((cycle_end - latest_time).total_seconds() // 3600)
     
-    # --- 3.2 互動選單與對齊優化 ---
-    # 使用 vertical_alignment="bottom" 確保下拉選單與右側按鈕水平對齊
+    # --- 嘗試讀取離線預測快取 ---
+    try:
+        # 直接讀取背景算好的 CSV
+        pred_cache = pd.read_csv("prediction_cache.csv")
+        pred_cache['datetime'] = pd.to_datetime(pred_cache['datetime'])
+        pred_cache = pred_cache.set_index('datetime')
+        st.session_state.prediction_result = pred_cache
+        data_ready = True
+    except FileNotFoundError:
+        st.session_state.prediction_result = None
+        data_ready = False
+
+    # --- 互動選單 ---
     col_sel, col_status = st.columns([2, 1], vertical_alignment="bottom")
-    
     with col_sel:
         view_option = st.selectbox(
             "選擇預測顯示範圍：",
             ["48 小時 (短期)", "7 天 (168小時)", "本期結算日 (直到截止)"],
-            index=0,
-            help="選擇不同的時間跨度，查看 AI 模擬的電力走勢。"
+            index=0
         )
     
-    # 映射選單到目標步數
+    # 映射選單到目標步數 (前端只負責決定顯示範圍，不負責運算)
+    cycle_start, cycle_end = get_current_bill_cycle(latest_time)
+    hours_to_end = int((cycle_end - latest_time).total_seconds() // 3600)
+    
     step_map = {
         "48 小時 (短期)": 48,
         "7 天 (168小時)": 168,
         "本期結算日 (直到截止)": hours_to_end
     }
-    target_steps = step_map[view_option]
-    
-    # 檢查 session 中已存在的預測數據長度
-    current_pred_df = st.session_state.get("prediction_result", None)
-    current_len = len(current_pred_df) if current_pred_df is not None else 0
+    view_steps = step_map[view_option]
 
     with col_status:
-        # 情況 A：數據不足，顯示執行按鈕
-        if current_len < target_steps:
-            if st.button(f"🚀 執行深度預測 ({target_steps}h)", use_container_width=True, type="primary"):
-                start_time = time.time()  # 開始計時
-                with st.spinner(f"AI 核心運算中..."):
-                    new_pred, _ = load_resources_and_predict(steps=target_steps)
-                    st.session_state.prediction_result = new_pred
-                
-                end_time = time.time()  # 結束計時
-                duration = end_time - start_time
-                st.session_state.last_calc_time = duration # 存入 session 以便顯示
-                st.rerun()
-        # 情況 B：數據充足，顯示成功狀態
+        if data_ready:
+            st.success("⚡ AI 預測數據已就緒 (Offline Inference)", icon="✅")
         else:
-            st.success("數據已就緒", icon="✅")
-
-    # 顯示上一次運算的耗時資訊（若存在）
-    if "last_calc_time" in st.session_state:
-        st.caption(f"⏱️ 最近一次 AI 深度運算耗時：{st.session_state.last_calc_time:.2f} 秒")
+            st.warning("🔄 系統正在背景進行首次推論，請稍後重整。", icon="⏳")
 
     # --- 3.3 圖表繪製 ---
     tab_chart, tab_data = st.tabs(["趨勢圖表", "詳細歷史數據"])
@@ -156,7 +145,7 @@ def show_dashboard_page():
             pred_res = st.session_state.prediction_result.copy()
             
             # 根據使用者選取的範圍過濾顯示數據
-            display_end = latest_time + timedelta(hours=target_steps)
+            display_end = latest_time + timedelta(hours=view_steps)
             pred_res = pred_res[pred_res.index <= display_end]
             
             p_data = pred_res[['預測值']].reset_index()
