@@ -26,7 +26,7 @@ class ModelService:
     def load_models(self):
         print("Loading models...")
         if os.path.exists(LSTM_MODEL_PATH):
-            self.model_lstm = tf.keras.models.load_model(LSTM_MODEL_PATH)
+            self.model_lstm = tf.keras.models.load_model(LSTM_MODEL_PATH, compile=False)
             print(f"LSTM model loaded from {LSTM_MODEL_PATH}")
         
         if os.path.exists(RESIDUAL_MODEL_PATH):
