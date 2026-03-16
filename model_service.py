@@ -10,7 +10,7 @@ from app_utils import load_data
 
 # ================= 設定區 =================
 # 模型路徑設定
-LSTM_MODEL_PATH = "lstm_hybrid_seq2seq3.keras"
+LSTM_MODEL_PATH = "lstm_hybrid_seq2seq3.h5"
 RESIDUAL_MODEL_PATH = "lgbm_residual_seq2seq3.pkl"
 HYBRID_MODEL_PATH = "hybrid_residual_seq2seq3.pkl"
 
