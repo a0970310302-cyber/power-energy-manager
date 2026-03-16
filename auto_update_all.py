@@ -153,7 +153,16 @@ def update_local_csv():
 
     # 2. 數據聚合 
     try:
-        p_data = requests.get(PANTRY_URL).json()
+        import time
+        logging.info("⏳ 暫停 2 秒，避免觸發 Pantry API 速率限制...")
+        time.sleep(2) 
+        
+        p_res = requests.get(PANTRY_URL)
+        if p_res.status_code != 200:
+            logging.error(f"❌ Pantry API 拒絕連線: 狀態碼 {p_res.status_code}, 內容: {p_res.text}")
+            return
+            
+        p_data = p_res.json()
         logging.info(f"📡 已從 Pantry 載入 {len(p_data)} 筆數據進行聚合分析")
         
         df_p = pd.DataFrame(list(p_data.items()), columns=['datetime', 'power'])
@@ -166,6 +175,17 @@ def update_local_csv():
         df_new_api = pd.DataFrame(index=hourly_p.index)
         df_new_api['power'] = hourly_p.values
         df_new_api['isMssingData'] = ((4 - hourly_c) / 4).clip(lower=0).values
+        
+        # 增量過濾加入 3 天的安全覆寫視窗
+        safe_dt = last_dt - pd.Timedelta(days=3)
+        df_new_inc = df_new_api[df_new_api.index > safe_dt].copy()
+        if df_new_inc.empty:
+            logging.info("✨ 檢查完畢：近期無新數據或需校正的資料，無需更新。")
+            return
+        logging.info(f"📝 發現 {len(df_new_inc)} 小時的近期數據準備更新與寫入...")
+    except Exception as e:
+        logging.error(f"❌ [Step 2 數據處理失敗]: {str(e)}")
+        return
         
         # 增量過濾加入 3 天的安全覆寫視窗
         safe_dt = last_dt - pd.Timedelta(days=3)
