@@ -42,6 +42,7 @@ jobs:
           JSON_SOURCE_URL: ${{ secrets.JSON_SOURCE_URL }}
           PANTRY_ID: ${{ secrets.PANTRY_ID }}
           PANTRY_BASKET: ${{ secrets.PANTRY_BASKET }}
+          PANTRY_BASKET: "2026-q1"
           WEATHER_INDEX_URL: ${{ secrets.WEATHER_INDEX_URL }}
         run: python auto_update_all.py
 
