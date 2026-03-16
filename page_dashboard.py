@@ -184,7 +184,7 @@ def show_dashboard_page():
             )
             
             # 強制鎖定 X 軸範圍，確保選單切換時縮放正確
-            fig.update_xaxes(range=[latest_time - timedelta(days=3), latest_time + timedelta(hours=target_steps)])
+            fig.update_xaxes(range=[latest_time - timedelta(days=3), latest_time + timedelta(hours=view_steps)])
             
             # 加入「現在時間」垂直線
             fig.add_vline(x=latest_time.timestamp() * 1000, line_width=1, line_dash="solid", line_color="white")
