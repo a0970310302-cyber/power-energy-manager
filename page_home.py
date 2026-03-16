@@ -23,11 +23,26 @@ def show_home_page():
         st.warning("⚠️ 系統初始化中，等待數據接入...")
         return
 
-    # 計算 KPI
+    # 計算 KPI (KPI 只需要看歷史到現在的狀況)
     kpis = get_core_kpis(df_history)
     
-    # [關鍵修改] 取得統一的計費報告
-    report = get_billing_report(df_history)
+    # 🌟 新增：嘗試讀取離線預測快取，並與歷史資料拼接
+    try:
+        pred_cache = pd.read_csv("prediction_cache.csv")
+        pred_cache['datetime'] = pd.to_datetime(pred_cache['datetime'])
+        pred_cache = pred_cache.set_index('datetime')
+        
+        # 將 AI 預測的欄位重新命名以符合 app_utils 的計算格式
+        pred_for_bill = pred_cache.copy()
+        pred_for_bill['power_kW'] = pred_for_bill['預測值']
+        
+        # 將歷史資料與 AI 預測資料拼接成完整的一期資料
+        df_combined = pd.concat([df_history, pred_for_bill[['power_kW']]])
+    except FileNotFoundError:
+        df_combined = df_history 
+
+    # [關鍵修改] 取得統一的計費報告 (🌟 改為傳入拼接好的 df_combined)
+    report = get_billing_report(df_combined)
     
     # --- 1. AI 總結語 (根據 report 狀態) ---
     welcome_msg = ""
