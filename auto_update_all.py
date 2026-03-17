@@ -12,7 +12,7 @@ from datetime import datetime
 # ==========================================
 # 💡 透過 os.getenv 讀取環境變數。第二個參數是「本地預設 fallback 值」。
 # 確保你在自己電腦(Local)測試時依然能跑，但在 GitHub 上會優先吃 Secrets！
-JSON_SOURCE_URL = os.getenv("JSON_SOURCE_URL", "https://api.jsonstorage.net/v1/json/888edb43-7993-46ef-8020-767afb44a2cb/3a6282d1-b474-4274-952b-e4a0a84f0deb?apiKey=e1230ae2-6eee-433a-ad58-7ab2c622b9e5")
+JSON_SOURCE_URL = os.getenv("JSON_SOURCE_URL", "https://api.jsonstorage.net/v1/json/888edb43-7993-46ef-8020-767afb44a2cb/bbdace99-60c5-4604-91df-414a76cc3c6e?apiKey=e1230ae2-6eee-433a-ad58-7ab2c622b9e5")
 
 PANTRY_ID = os.getenv("PANTRY_ID", "6a2e85f5-4af4-4efd-bb9f-c5604fe8475e")
 PANTRY_BASKET = os.getenv("PANTRY_BASKET", "2026-q1")
@@ -65,35 +65,27 @@ def sync_cloud_to_pantry():
         formatted_new_data = {}
         processed_dates = set()
         
-        for date_key, date_content in data_block.items():
-            # 3. 檢查日期過濾條件
-            if not date_key.startswith("202"): 
+        # 新結構的 key 格式為 "YYYY-MM-DD-HH-MM"
+        for datetime_key, item_data in data_block.items():
+            if not datetime_key.startswith("202"): 
                 continue
-            
-            processed_dates.add(date_key)
-            data_list = date_content.get("listAMIBase15MinData", [])
-            
-            # 只有抓到當天資料時才印出細節，避免 Log 太長
-            if len(data_list) > 0:
-                 logging.info(f"📊 [Debug] 處理日期 {date_key}: 原始資料共 {len(data_list)} 筆")
-            
-            # 反向掃描，尋找最後一筆「真正有效」的數據索引
-            last_valid_idx = -1
-            for i in range(len(data_list) - 1, -1, -1):
-                item = data_list[i]
-                if not (item.get("isMssingData") == 1 and item.get("power") == 0):
-                    last_valid_idx = i
-                    break
-            
-            # 截斷陣列
-            valid_data_list = data_list[:last_valid_idx + 1] if last_valid_idx != -1 else []
-            logging.info(f"🔍 掃描到日期 {date_key}: 原始 {len(data_list)} 筆 -> 過濾未產生數據後剩餘 {len(valid_data_list)} 筆")
-            
-            for item in valid_data_list:
-                time_str = item.get("time")
-                power_val = item.get("power")
-                formatted_new_data[f"{date_key} {time_str}:00"] = power_val
-        
+                
+            # 將 "2026-03-16-07-30" 拆解為日期與時間
+            parts = datetime_key.split('-')
+            if len(parts) == 5:
+                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}" # "2026-03-16"
+                time_str = f"{parts[3]}:{parts[4]}"            # "07:30"
+                
+                processed_dates.add(date_str)
+                
+                power_val = item_data.get("power", 0)
+                is_missing = item_data.get("isMssingData", 0)
+                
+                # 組合出程式後端統一使用的標準格式 "YYYY-MM-DD HH:MM:00"
+                standard_time_key = f"{date_str} {time_str}:00"
+                formatted_new_data[standard_time_key] = power_val
+                
+        logging.info(f"🔍 解析新結構 JSON 完成，共提取 {len(formatted_new_data)} 筆資料")
         if not formatted_new_data:
             logging.info("✨ 目前時段無有效電力數據（可能為資料源更新中），任務結束。")
             return False
