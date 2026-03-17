@@ -42,64 +42,67 @@ def show_analysis_page():
         "⚠️ 異常耗電偵測",
         "🎯 節能目標管理"
     ])
-
+    
     # ==========================================
-    # Tab 1: 滾動式預測趨勢 (真實 AI 數據版)
+    # Tab 1: 用電行為與環境特徵分析 (全新改造)
     # ==========================================
     with tab1:
-        st.subheader("📈 雙月滾動式修正預測")
+        st.subheader("🧩 用電行為與環境特徵解構")
         st.markdown("""
-        此圖表展示系統如何結合 **歷史數據 (實線)** 與 **AI 預測 (虛線)**。
-        系統每日凌晨自動將昨天的「預測值」校正為「真實值」，消除累積誤差。
+        AI 精準預測的背後，來自於對使用者**生活作息**與**環境抗性**的深度理解。
+        此區塊為您透視系統提取的關鍵特徵模式。
         """)
         
-        last_timestamp = df_history.index.max()
-        start_history = last_timestamp - timedelta(days=7)
+        # --- 1. 用電熱力圖 ---
+        st.markdown("#### 🕒 週期作息熱力圖 (24h x 7Days)")
+        st.caption("顏色越亮代表平均耗電量越高。這有助於直觀判斷您的「用電尖峰」是否與台電的昂貴時段重疊。")
         
-        df_actual = df_history.loc[start_history:].copy()
-        df_actual = df_actual[['power_kW']].reset_index()
-        df_actual.columns = ['time', 'value'] 
-        df_actual['Type'] = '真實數據 (Actual)'
+        # 準備熱力圖資料
+        df_heatmap = df_history.copy()
+        df_heatmap['Hour'] = df_heatmap.index.hour
+        df_heatmap['DayOfWeek'] = df_heatmap.index.dayofweek
         
-        df_forecast_plot = pd.DataFrame()
+        # 將星期數字轉為中文，並強制排序
+        day_map = {0:'一', 1:'二', 2:'三', 3:'四', 4:'五', 5:'六', 6:'日'}
+        df_heatmap['DayName'] = df_heatmap['DayOfWeek'].map(day_map)
         
-        if "prediction_result" in st.session_state and st.session_state.prediction_result is not None:
-            pred_res = st.session_state.prediction_result.copy()
-            
-            df_forecast = pred_res[['預測值']].reset_index()
-            df_forecast.columns = ['time', 'value']
-            df_forecast['Type'] = 'AI 預測 (Forecast)'
-            
-            if not df_actual.empty:
-                last_point = df_actual.iloc[[-1]].copy()
-                last_point['Type'] = 'AI 預測 (Forecast)' 
-                df_forecast_plot = pd.concat([last_point, df_forecast])
-            else:
-                df_forecast_plot = df_forecast
-        else:
-            st.warning("⚠️ 目前沒有預測數據，請回到側邊欄點擊「更新即時數據」。")
+        # 計算每個星期幾的每個小時的平均用電
+        agg_df = df_heatmap.groupby(['DayOfWeek', 'DayName', 'Hour'])['power_kW'].mean().reset_index()
+        
+        fig_heat = px.density_heatmap(
+            agg_df, x='Hour', y='DayName', z='power_kW',
+            histfunc='avg', nbinsx=24,
+            category_orders={'DayName': ['一', '二', '三', '四', '五', '六', '日']},
+            color_continuous_scale="Inferno", # 使用火焰色系凸顯高耗電
+            template="plotly_dark",
+            labels={'Hour': '時間 (24H)', 'DayName': '星期', 'power_kW': '平均功率 (kW)'}
+        )
+        fig_heat.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig_heat, use_container_width=True)
 
-        if not df_actual.empty:
-            df_chart = pd.concat([df_actual, df_forecast_plot])
+        st.divider()
+
+        # --- 2. 氣溫關聯散佈圖 ---
+        st.markdown("#### 🌡️ 環境溫度 vs. 耗電量 關聯度")
+        st.caption("展示氣象因子對家庭負載的影響。通常在特定溫度以上，因空調啟動會出現明顯的「耗電陡升」現象。")
+        
+        if 'temperature' in df_history.columns:
+            # 取最近一個月的資料來畫散佈圖，避免點太密集
+            df_scatter = df_history.tail(24 * 30).copy()
+            df_scatter['Hour'] = df_scatter.index.hour
             
-            fig = px.line(df_chart, x='time', y='value', color='Type',
-                          line_dash='Type', 
-                          line_dash_map={'真實數據 (Actual)': 'solid', 'AI 預測 (Forecast)': 'dash'},
-                          color_discrete_map={'真實數據 (Actual)': '#00CC96', 'AI 預測 (Forecast)': '#EF553B'},
-                          template="plotly_dark")
-            
-            fig.add_vline(x=last_timestamp.timestamp() * 1000, line_width=2, line_dash="dot", line_color="white")
-            fig.add_annotation(x=last_timestamp.timestamp() * 1000, y=df_chart['value'].max(), 
-                               text="Now (修正點)", showarrow=True, arrowhead=1, ax=40, ay=0)
-            
-            fig.update_layout(
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(l=20, r=20, t=20, b=20),
-                height=450,
-                xaxis_title="時間",
-                yaxis_title="功率 (kW)"
+            fig_scatter = px.scatter(
+                df_scatter, x='temperature', y='power_kW', 
+                color='Hour', # 用顏色區分白天或黑夜
+                color_continuous_scale="Turbo",
+                template="plotly_dark",
+                opacity=0.7,
+                labels={'temperature': '外部氣溫 (°C)', 'power_kW': '實際功率 (kW)', 'Hour': '發生時間'}
             )
-            st.plotly_chart(fig, use_container_width=True)
+            fig_scatter.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("ℹ️ 目前資料庫中尚未檢測到完整的氣溫 (temperature) 特徵，無法繪製環境關聯圖。")
 
     # ==========================================
     # Tab 2: 電價方案模擬 (整合多年度費率)
