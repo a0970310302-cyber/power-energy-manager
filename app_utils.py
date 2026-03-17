@@ -249,13 +249,17 @@ def analyze_pricing_plans(df):
     
     return {"cost_progressive": total_prog_cost, "cost_tou": int(df['cost_tou'].sum())}, df
 
-def get_billing_report(df, budget=3000):
+    # 🌟 將括號內增加一個 current_time=None 參數
+def get_billing_report(df, budget=3000, current_time=None):
     default = {"period": "N/A", "current_bill": 0, "predicted_bill": 0, "potential_tou_bill":0, "budget": budget, "status": "safe", "usage_percent": 0.0, "savings": 0, "recommendation_msg": "N/A"}
     if df is None or df.empty: return default
     
-    latest_time = df.index[-1]
+    # 🌟 修改 1：如果沒有指定時間，才使用資料的最後一筆
+    if current_time is None:
+        current_time = df.index[-1]
     
-    cycle_start, cycle_end = get_current_bill_cycle(latest_time)
+    # 🌟 修改 2：改用 current_time 來尋找帳單週期
+    cycle_start, cycle_end = get_current_bill_cycle(current_time)
     
     df_period = df[(df.index >= cycle_start) & (df.index <= cycle_end)]
     
@@ -265,7 +269,9 @@ def get_billing_report(df, budget=3000):
     total_bill_projected = res['cost_progressive'] 
     total_tou_projected = res['cost_tou']
     
-    df_actual = df_period[df_period.index <= datetime.now()]
+    # 🌟 修改 3：把原本的 datetime.now() 改成 current_time，確保時間比較基準一致
+    df_actual = df_period[df_period.index <= current_time]
+    
     if not df_actual.empty:
         res_actual, _ = analyze_pricing_plans(df_actual)
         current_bill = res_actual['cost_progressive']
