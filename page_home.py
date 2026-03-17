@@ -64,12 +64,11 @@ def show_home_page():
     # --- 2. 三大決策卡片 ---
     col1, col2, col3 = st.columns(3)
 
-    # === 卡片 1: 財務安全 (使用 report 數據) ===
+    # === 卡片 1: 財務安全 ===
     with col1:
         with st.container(border=True):
             st.markdown("#### 💰 預算監控")
             
-            # 使用統一計算出的狀態
             if report['status'] == "safe":
                 st.markdown("# :green[安全]")
             elif report['status'] == "warning":
@@ -77,11 +76,15 @@ def show_home_page():
             else:
                 st.markdown("# :red[超支]")
                 
-            st.caption(f"預測結算 ${report['predicted_bill']:,}")
+            # 🌟 升級為 metric，讓大數字的字體與其他卡片完全一致
+            delta_val = report['predicted_bill'] - report['budget']
+            delta_msg = f"超支 ${abs(delta_val):,}" if delta_val > 0 else f"剩餘 ${abs(delta_val):,}"
+            st.metric("AI 預測結算", f"${report['predicted_bill']:,}", delta=delta_msg, delta_color="inverse")
+            
+            # 保留進度條在最下方
             st.progress(report['usage_percent'])
-            st.markdown(f"**目標：${report['budget']:,}**")
 
-    # === 卡片 2: 方案優化 (使用 report 數據) ===
+    # === 卡片 2: 方案優化 ===
     with col2:
         with st.container(border=True):
             st.markdown("#### 📉 方案最佳化")
@@ -92,10 +95,12 @@ def show_home_page():
                 st.metric("可節省", f"NT$ {savings:,}", delta="時間電價更優")
             else:
                 st.markdown("# :blue[維持現狀]")
-                # 如果 savings 是負的，代表累進更省
                 st.metric("累進最省", "最佳方案", delta_color="off")
+                
+            # 🌟 補上隱形空白行，對齊卡片 1 的進度條高度
+            st.markdown("<div style='height: 22px'></div>", unsafe_allow_html=True)
 
-    # === 卡片 3: 行為診斷 (維持 KPI 邏輯) ===
+    # === 卡片 3: 行為診斷 ===
     with col3:
         with st.container(border=True):
             st.markdown("#### 🩺 用電健康度")
@@ -108,9 +113,11 @@ def show_home_page():
                 st.metric("較上週", f"{trend:.1f}%", delta_color="inverse")
             else:
                 st.markdown("# :blue[平穩正常]")
-                st.metric("較上週", f"{trend:+.1f}%")
+                st.metric("較上週", f"{trend:+.1f}%", delta_color="off")
+                
+            # 🌟 補上隱形空白行，對齊卡片 1 的進度條高度
+            st.markdown("<div style='height: 22px'></div>", unsafe_allow_html=True)
 
-    st.markdown("---")
 
     # --- 3. 快速入口 ---
     st.subheader("🚀 快速功能")
