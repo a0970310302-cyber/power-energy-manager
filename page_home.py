@@ -56,19 +56,24 @@ def show_home_page():
         st.info(welcome_msg, icon="💡")
     # 優先級 3: 一切正常
     else:
-        welcome_msg = f"✅ **早安！目前用電狀況良好，預算控制在安全範圍內。**"
+        welcome_msg = f" **早安！目前用電狀況良好，預算控制在安全範圍內。**"
         st.success(welcome_msg, icon="✅")
 
     st.markdown("---")
 
-    # --- 2. 三大決策卡片 ---
+        # --- 2. 三大決策卡片 ---
     col1, col2, col3 = st.columns(3)
+    
+    # 🌟 設定統一的卡片高度 (單位：像素)
+    CARD_HEIGHT = 230 
 
-    # === 卡片 1: 財務安全 ===
+    # === 卡片 1: 財務安全 (使用 report 數據) ===
     with col1:
-        with st.container(border=True):
+        # 🌟 加上 height 參數
+        with st.container(border=True, height=CARD_HEIGHT):
             st.markdown("#### 💰 預算監控")
             
+            # 使用統一計算出的狀態
             if report['status'] == "safe":
                 st.markdown("# :green[安全]")
             elif report['status'] == "warning":
@@ -76,17 +81,14 @@ def show_home_page():
             else:
                 st.markdown("# :red[超支]")
                 
-            # 🌟 升級為 metric，讓大數字的字體與其他卡片完全一致
-            delta_val = report['predicted_bill'] - report['budget']
-            delta_msg = f"超支 ${abs(delta_val):,}" if delta_val > 0 else f"剩餘 ${abs(delta_val):,}"
-            st.metric("AI 預測結算", f"${report['predicted_bill']:,}", delta=delta_msg, delta_color="inverse")
-            
-            # 保留進度條在最下方
+            st.caption(f"預測結算 ${report['predicted_bill']:,}")
             st.progress(report['usage_percent'])
+            st.markdown(f"**目標：${report['budget']:,}**")
 
-    # === 卡片 2: 方案優化 ===
+    # === 卡片 2: 方案優化 (使用 report 數據) ===
     with col2:
-        with st.container(border=True):
+        # 🌟 加上 height 參數
+        with st.container(border=True, height=CARD_HEIGHT):
             st.markdown("#### 📉 方案最佳化")
             savings = report['savings']
             
@@ -95,14 +97,13 @@ def show_home_page():
                 st.metric("可節省", f"NT$ {savings:,}", delta="時間電價更優")
             else:
                 st.markdown("# :blue[維持現狀]")
+                # 如果 savings 是負的，代表累進更省
                 st.metric("累進最省", "最佳方案", delta_color="off")
-                
-            # 🌟 補上隱形空白行，對齊卡片 1 的進度條高度
-            st.markdown("<div style='height: 22px'></div>", unsafe_allow_html=True)
 
-    # === 卡片 3: 行為診斷 ===
+    # === 卡片 3: 行為診斷 (維持 KPI 邏輯) ===
     with col3:
-        with st.container(border=True):
+        # 🌟 加上 height 參數
+        with st.container(border=True, height=CARD_HEIGHT):
             st.markdown("#### 🩺 用電健康度")
             trend = kpis['weekly_delta_percent']
             if trend > 15:
@@ -113,11 +114,7 @@ def show_home_page():
                 st.metric("較上週", f"{trend:.1f}%", delta_color="inverse")
             else:
                 st.markdown("# :blue[平穩正常]")
-                st.metric("較上週", f"{trend:+.1f}%", delta_color="off")
-                
-            # 🌟 補上隱形空白行，對齊卡片 1 的進度條高度
-            st.markdown("<div style='height: 22px'></div>", unsafe_allow_html=True)
-
+                st.metric("較上週", f"{trend:+.1f}%")
 
     # --- 3. 快速入口 ---
     st.subheader("🚀 快速功能")
