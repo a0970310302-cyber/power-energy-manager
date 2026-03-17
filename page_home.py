@@ -40,9 +40,9 @@ def show_home_page():
         df_combined = pd.concat([df_history, pred_for_bill[['power_kW']]])
     except FileNotFoundError:
         df_combined = df_history 
-
-    # [關鍵修改] 取得統一的計費報告 (🌟 改為傳入拼接好的 df_combined)
-    report = get_billing_report(df_combined)
+        
+    true_current_time = df_history.index[-1]
+    report = get_billing_report(df_combined, current_time=true_current_time)
     
     # --- 1. AI 總結語 (根據 report 狀態) ---
     welcome_msg = ""
