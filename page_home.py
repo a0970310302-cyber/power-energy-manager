@@ -65,7 +65,7 @@ def show_home_page():
     col1, col2, col3 = st.columns(3)
     
     # 🌟 設定統一的卡片高度 (單位：像素)
-    CARD_HEIGHT = 230 
+    CARD_HEIGHT = 300
 
     # === 卡片 1: 財務安全 (使用 report 數據) ===
     with col1:
