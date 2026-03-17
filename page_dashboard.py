@@ -60,9 +60,10 @@ def show_dashboard_page():
     # 區塊 1: 帳單預算監控
     # ==========================================
     st.header("💰 帳單預算監控")
-    
-    # 🌟 這裡傳入拼接好的 df_combined (包含歷史+未來預測)
-    report = get_billing_report(df_combined)
+
+    # 明確告訴計費程式，真正的「現在」是純歷史資料的最後一筆時間
+    true_current_time = df_history.index[-1]
+    report = get_billing_report(df_combined, current_time=true_current_time)
     
     st.info(f"📅 **本期帳單週期： {report['period']}**")
     
