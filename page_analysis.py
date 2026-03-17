@@ -30,6 +30,17 @@ def show_analysis_page():
 
     # 計算基礎 KPI
     kpis = get_core_kpis(df_history)
+    true_current_time = df_history.index[-1]
+    try:
+        pred_cache = pd.read_csv("prediction_cache.csv")
+        pred_cache['datetime'] = pd.to_datetime(pred_cache['datetime'])
+        pred_cache = pred_cache.set_index('datetime')
+        
+        pred_for_bill = pred_cache.copy()
+        pred_for_bill['power_kW'] = pred_for_bill['預測值']
+        df_combined = pd.concat([df_history, pred_for_bill[['power_kW']]])
+    except FileNotFoundError:
+        df_combined = df_history
 
     # --- 頁面標題 ---
     st.title("🔬 AI 決策分析室")
@@ -105,18 +116,22 @@ def show_analysis_page():
         else:
             st.info("ℹ️ 目前資料庫中尚未檢測到完整的氣溫 (temperature) 特徵，無法繪製環境關聯圖。")
 
-    # ==========================================
+        # ==========================================
     # Tab 2: 電價方案模擬 (整合多年度費率)
     # ==========================================
     with tab2:
         st.subheader("💰 AI 電價分析器 (支援 2022-2025 歷史費率)")
         
-        st.info("📊 **本月即時分析** (基於目前累積用量與預測)")
-        report = get_billing_report(df_history) 
+        # 🌟 修改 1：文字改為「本周期」
+        st.info("📊 **本周期即時分析** (基於目前累積用量與預測)")
+        
+        # 🌟 修改 2：改用 df_combined 與 true_current_time
+        report = get_billing_report(df_combined, current_time=true_current_time) 
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("累進制 (現況)", f"${report['current_bill']:,}")
-        c2.metric("時間電價 (試算)", f"${report['potential_tou_bill']:,}")
+        # 🌟 修改 3：把 current_bill 改為 predicted_bill，這樣才會顯示包含預測的最終總額
+        c1.metric("累進制 (預測結算)", f"${report['predicted_bill']:,}")
+        c2.metric("時間電價 (預測結算)", f"${report['potential_tou_bill']:,}")
         
         savings = report['savings']
         if savings > 0:
@@ -209,11 +224,12 @@ def show_analysis_page():
     # ==========================================
     with tab4:
         st.subheader("🎯 節能目標管理")
-        report = get_billing_report(df_history)
+        
+        # 🌟 修改：改用 df_combined 與 true_current_time
+        report = get_billing_report(df_combined, current_time=true_current_time)
         current_proj_cost = report['predicted_bill']
         
-        target = st.number_input("設定本月電費目標 (元)", value=1000, step=100)
-        
+        target = st.number_input("設定本期電費目標 (元)", value=1000, step=100)
         col_t1, col_t2 = st.columns(2)
         col_t1.metric("本月目標", f"${target:,}")
         
