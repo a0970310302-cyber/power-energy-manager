@@ -250,7 +250,7 @@ def analyze_pricing_plans(df):
     return {"cost_progressive": total_prog_cost, "cost_tou": int(df['cost_tou'].sum())}, df
 
     # 🌟 將括號內增加一個 current_time=None 參數
-def get_billing_report(df, budget=3000, current_time=None):
+def get_billing_report(df, budget=1000, current_time=None):
     default = {"period": "N/A", "current_bill": 0, "predicted_bill": 0, "potential_tou_bill":0, "budget": budget, "status": "safe", "usage_percent": 0.0, "savings": 0, "recommendation_msg": "N/A"}
     if df is None or df.empty: return default
     
