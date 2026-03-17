@@ -53,40 +53,35 @@ def show_analysis_page():
         "⚠️ 異常耗電偵測",
         "🎯 節能目標管理"
     ])
-
-
-        # ==========================================
-    # Tab 1: 用電行為與環境特徵分析 (全新改造)
+    
+    # ==========================================
+    # Tab 1: 用電行為與環境特徵解構 (加入自動文字解讀)
     # ==========================================
     with tab1:
         st.subheader("🧩 用電行為與環境特徵解構")
-        st.markdown("""
-        AI 精準預測的背後，來自於對使用者**生活作息**與**環境抗性**的深度理解。
-        此區塊為您透視系統提取的關鍵特徵模式。
-        """)
+        st.markdown("AI 藉由深度學習您的**作息規律**與**環境抗性**來進行預測。以下為系統提取的關鍵特徵：")
         
-        # --- 1. 用電熱力圖 ---
-        st.markdown("#### 🕒 週期作息熱力圖 (24h x 7Days)")
-        st.caption("顏色越亮代表平均耗電量越高。這有助於直觀判斷您的「用電尖峰」是否與台電的昂貴時段重疊。")
-        
-        # 準備熱力圖資料
+        # --- 1. 準備熱力圖資料 ---
         df_heatmap = df_history.copy()
         df_heatmap['Hour'] = df_heatmap.index.hour
         df_heatmap['DayOfWeek'] = df_heatmap.index.dayofweek
-        
-        # 將星期數字轉為中文，並強制排序
         day_map = {0:'一', 1:'二', 2:'三', 3:'四', 4:'五', 5:'六', 6:'日'}
         df_heatmap['DayName'] = df_heatmap['DayOfWeek'].map(day_map)
-        
-        # 計算每個星期幾的每個小時的平均用電
         agg_df = df_heatmap.groupby(['DayOfWeek', 'DayName', 'Hour'])['power_kW'].mean().reset_index()
         
+        # 🌟 【新增】AI 自動判讀作息
+        peak_idx = agg_df['power_kW'].idxmax()
+        peak_day = agg_df.loc[peak_idx, 'DayName']
+        peak_hour = agg_df.loc[peak_idx, 'Hour']
+        peak_val = agg_df.loc[peak_idx, 'power_kW']
+        
+        st.success(f"💡 **作息特徵洞察**：\n系統發現您的用電最高峰通常落在 **星期{peak_day} 的 {peak_hour}:00 左右** (平均 {peak_val:.2f} kW)。若此時段剛好是台電的高價時段，建議可嘗試將洗衣、烘衣等活動移至其他時間。")
+        
+        # 繪製熱力圖
         fig_heat = px.density_heatmap(
-            agg_df, x='Hour', y='DayName', z='power_kW',
-            histfunc='avg', nbinsx=24,
+            agg_df, x='Hour', y='DayName', z='power_kW', histfunc='avg', nbinsx=24,
             category_orders={'DayName': ['一', '二', '三', '四', '五', '六', '日']},
-            color_continuous_scale="Inferno", # 使用火焰色系凸顯高耗電
-            template="plotly_dark",
+            color_continuous_scale="Inferno", template="plotly_dark",
             labels={'Hour': '時間 (24H)', 'DayName': '星期', 'power_kW': '平均功率 (kW)'}
         )
         fig_heat.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
@@ -96,27 +91,41 @@ def show_analysis_page():
 
         # --- 2. 氣溫關聯散佈圖 ---
         st.markdown("#### 🌡️ 環境溫度 vs. 耗電量 關聯度")
-        st.caption("展示氣象因子對家庭負載的影響。通常在特定溫度以上，因空調啟動會出現明顯的「耗電陡升」現象。")
         
         if 'temperature' in df_history.columns:
-            # 取最近一個月的資料來畫散佈圖，避免點太密集
             df_scatter = df_history.tail(24 * 30).copy()
             df_scatter['Hour'] = df_scatter.index.hour
             
+            # 🌟 【新增】AI 自動判讀氣溫相關性
+            corr = df_scatter['temperature'].corr(df_scatter['power_kW'])
+            
+            if corr > 0.6:
+                msg = f"呈 **高度正相關** (相關係數 {corr:.2f})"
+                adv = "這代表您的家庭耗電極度依賴冷暖氣設備。建議定期清洗濾網，或將冷氣調高 1 度，節能效果將會非常驚人！"
+            elif corr > 0.3:
+                msg = f"呈 **中度正相關** (相關係數 {corr:.2f})"
+                adv = "氣溫變化對您的耗電有一定影響，但您仍有其他常駐耗電設備。"
+            elif corr < -0.3:
+                msg = f"呈 **負相關** (相關係數 {corr:.2f})"
+                adv = "氣溫越低反而越耗電，系統推測您可能頻繁使用電暖器或高功率熱水設備。"
+            else:
+                msg = f"**關聯性極低** (相關係數 {corr:.2f})"
+                adv = "您的耗電量幾乎不受氣溫影響，代表主要耗電來源可能來自照明、電腦設備或營業用機具。"
+                
+            st.info(f"💡 **氣候敏感度診斷**：您的用電量與外部氣溫 {msg}。{adv}")
+            
+            # 繪製散佈圖
             fig_scatter = px.scatter(
-                df_scatter, x='temperature', y='power_kW', 
-                color='Hour', # 用顏色區分白天或黑夜
-                color_continuous_scale="Turbo",
-                template="plotly_dark",
-                opacity=0.7,
+                df_scatter, x='temperature', y='power_kW', color='Hour',
+                color_continuous_scale="Turbo", template="plotly_dark", opacity=0.7,
                 labels={'temperature': '外部氣溫 (°C)', 'power_kW': '實際功率 (kW)', 'Hour': '發生時間'}
             )
             fig_scatter.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig_scatter, use_container_width=True)
         else:
             st.info("ℹ️ 目前資料庫中尚未檢測到完整的氣溫 (temperature) 特徵，無法繪製環境關聯圖。")
-
-        # ==========================================
+    
+    # ==========================================
     # Tab 2: 電價方案模擬 (整合多年度費率)
     # ==========================================
     with tab2:
@@ -195,28 +204,46 @@ def show_analysis_page():
                     st.plotly_chart(fig_pie, use_container_width=True)
 
     # ==========================================
-    # Tab 3: 異常耗電偵測
+    # Tab 3: 異常耗電偵測 (優化：同時段基準法)
     # ==========================================
     with tab3:
         st.subheader("⚠️ AI 用電異常分析")
-        if st.button("🔍 掃描異常事件"):
-            with st.spinner("正在掃描歷史數據..."):
-                df_anom = df_history.copy()
-                window = 96 * 7 
-                df_anom['mean'] = df_anom['power_kW'].rolling(window=window, min_periods=1).mean()
-                df_anom['std'] = df_anom['power_kW'].rolling(window=window, min_periods=1).std()
-                df_anom['threshold'] = df_anom['mean'] + 2.5 * df_anom['std']
+        st.markdown("系統會比對您過去 30 天內 **「同一個時間點」** 的平均用電習慣，精準抓出不尋常的耗電行為，排除日夜作息的干擾。")
+        
+        if st.button("🔍 掃描近期異常事件"):
+            with st.spinner("正在進行時序特徵比對..."):
+                # 只取最近 30 天的資料來分析，避免太久以前的習慣影響判斷
+                df_anom = df_history.tail(24 * 30).copy()
                 
+                # 提取小時特徵
+                df_anom['Hour'] = df_anom.index.hour
+                
+                # 🌟 核心修正：計算「每個小時」專屬的平均值與標準差
+                hourly_stats = df_anom.groupby('Hour')['power_kW'].agg(['mean', 'std'])
+                
+                # 將計算結果合併回原表
+                df_anom = df_anom.join(hourly_stats, on='Hour')
+                
+                # 動態門檻：該時段平均值 + 3倍標準差 (Z-score > 3 視為極端異常)
+                df_anom['threshold'] = df_anom['mean'] + 3 * df_anom['std'].fillna(0)
+                
+                # 篩選出異常點
                 anomalies = df_anom[df_anom['power_kW'] > df_anom['threshold']]
                 
                 if anomalies.empty:
-                    st.success("✅ 檢測完畢，未發現顯著異常。")
+                    st.success("✅ 檢測完畢，近期未發現任何異常耗電行為。")
                 else:
-                    st.warning(f"⚠️ 偵測到 {len(anomalies)} 筆異常高耗電紀錄！")
-                    st.dataframe(anomalies[['power_kW', 'mean', 'threshold']].style.format("{:.2f}"))
+                    st.warning(f"⚠️ 偵測到 {len(anomalies)} 筆異常耗電紀錄！(已排除正常日夜峰值)")
+                    
+                    # 整理顯示表格
+                    display_df = anomalies[['power_kW', 'mean', 'threshold']].copy()
+                    display_df.columns = ['實際耗電 (kW)', '該時段歷史平均 (kW)', '警報門檻 (kW)']
+                    st.dataframe(display_df.style.format("{:.2f}"))
+                    
                     fig_anom = px.scatter(anomalies.reset_index(), x='timestamp', y='power_kW', 
                                           title="異常點時間分佈",
-                                          color_discrete_sequence=['red'])
+                                          color_discrete_sequence=['#FF4B4B'])
+                    fig_anom.update_layout(template="plotly_dark")
                     st.plotly_chart(fig_anom, use_container_width=True)
 
     # ==========================================
