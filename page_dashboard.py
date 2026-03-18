@@ -31,7 +31,7 @@ def show_dashboard_page():
     kpis = get_core_kpis(df_history)
 
     st.title("💡 智慧電能管家")
-    st.caption(f"{data_source_msg} | Hybrid AI 運算引擎：Online (Offline Inference)") 
+    st.caption(f"{data_source_msg} | Hybrid AI 運算引擎：Online") 
 
     if not kpis['status_data_available']:
         st.warning("資料量不足，部分指標可能無法計算。")
