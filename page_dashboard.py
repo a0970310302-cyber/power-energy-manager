@@ -47,9 +47,8 @@ def show_dashboard_page():
         # 將 AI 預測的欄位重新命名以符合 app_utils 的計算格式
         pred_for_bill = pred_cache.copy()
         pred_for_bill['power_kW'] = pred_for_bill['預測值']
-        
-        # 將歷史資料與 AI 預測資料拼接成完整的一期資料
-        df_combined = pd.concat([df_history, pred_for_bill[['power_kW']]])
+        future_pred = pred_for_bill[pred_for_bill.index > df_history.index[-1]]
+        df_combined = pd.concat([df_history, future_pred[['power_kW']]])
         
     except FileNotFoundError:
         st.session_state.prediction_result = None
@@ -160,9 +159,9 @@ def show_dashboard_page():
 
         if st.session_state.get("prediction_result") is not None:
             pred_res = st.session_state.prediction_result.copy()
-            
+
             display_end = latest_time + timedelta(hours=view_steps)
-            pred_res = pred_res[pred_res.index <= display_end]
+            pred_res = pred_res[(pred_res.index > latest_time) & (pred_res.index <= display_end)]
             
             p_data = pred_res[['預測值']].reset_index()
             p_data.columns = ['time', 'value']
