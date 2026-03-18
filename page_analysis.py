@@ -153,7 +153,7 @@ def show_analysis_page():
         st.divider()
         
         # 歷史回測工具
-        st.markdown("#### 🕰️ 歷史帳單回測")
+        st.markdown("#### 🕰️ 歷史帳單回顧")
         st.caption("AI 會自動根據您選擇的年份，套用當年度正確的電價公式 (含尖峰時段調整)。")
         
         col_date1, col_date2 = st.columns(2)
