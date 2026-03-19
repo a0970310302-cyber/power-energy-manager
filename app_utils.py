@@ -247,7 +247,7 @@ def analyze_pricing_plans(df):
     
     total_prog_cost = calculate_tiered_bill(total_kwh, days, is_summer_mode, rate_config_period)
     
-    return {"cost_progressive": total_prog_cost, "cost_tou": int(df['cost_tou'].sum())}, df
+    return {"cost_progressive": total_prog_cost, "cost_tou": int(df['cost_tou'].sum()), "total_kwh": total_kwh}, df
 
     # 🌟 將括號內增加一個 current_time=None 參數
 def get_billing_report(df, budget=1000, current_time=None):
