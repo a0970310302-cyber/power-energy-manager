@@ -124,8 +124,6 @@ def show_analysis_page():
             )
             fig_scatter.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig_scatter, use_container_width=True)
-                
-            st.info(f"💡 **氣候敏感度診斷**：您的用電量與外部氣溫 {msg}。{adv}")
 
         else:
             st.info("ℹ️ 目前資料庫中尚未檢測到完整的氣溫 (temperature) 特徵，無法繪製環境關聯圖。")
