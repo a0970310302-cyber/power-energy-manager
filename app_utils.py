@@ -268,6 +268,28 @@ def get_billing_report(df, budget=1000, current_time=None):
     res, _ = analyze_pricing_plans(df_period)
     total_bill_projected = res['cost_progressive'] 
     total_tou_projected = res['cost_tou']
+    total_kwh_projected = res.get('total_kwh', 0) # 🌟 取得剛剛回傳的總預估度數
+    
+    # 🌟 新增：台電級距推算邏輯
+    days_count = (df_period.index.max() - df_period.index.min()).days + 1
+    is_bimonthly = days_count > 45
+    m = 2 if is_bimonthly else 1
+    tiers = [t * m for t in [120, 330, 500, 700, 1000]]
+    
+    current_tier = 1
+    next_tier_kwh = tiers[0]
+    for i, limit in enumerate(tiers):
+        if total_kwh_projected <= limit:
+            current_tier = i + 1
+            next_tier_kwh = limit
+            break
+    else:
+        current_tier = 6 # 超過最高級距
+        next_tier_kwh = None
+    
+    kwh_to_next_tier = (next_tier_kwh - total_kwh_projected) if next_tier_kwh else 0
+    total_bill_projected = res['cost_progressive'] 
+    total_tou_projected = res['cost_tou']
     
     # 🌟 修改 3：把原本的 datetime.now() 改成 current_time，確保時間比較基準一致
     df_actual = df_period[df_period.index <= current_time]
@@ -337,12 +359,18 @@ def get_core_kpis(df):
             weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
 
         return {
-            "status_data_available": True,
-            "current_load": round(current_load, 3),
-            "kwh_today_so_far": round(today_usage, 2),
-            "kwh_this_month_so_far": round(kwh_this_month, 2),
-            "weekly_delta_percent": round(weekly_delta, 1),
-            "kwh_last_7_days": round(usage_last_7d, 2),
-            "last_updated": latest_time.strftime("%Y-%m-%d %H:%M")
+            "period": f"{cycle_start.strftime('%Y-%m-%d')} ~ {cycle_end.strftime('%Y-%m-%d')}",
+            "current_bill": int(current_bill),
+            "predicted_bill": int(pred_bill),
+            "potential_tou_bill": int(total_tou_projected),
+            "budget": budget,
+            "status": status,
+            "usage_percent": min(pred_bill/budget, 1.0) if budget > 0 else 0,
+            "savings": int(savings),
+            "recommendation_msg": recommendation,
+            "current_tier": current_tier,             # 新增欄位
+            "total_kwh": total_kwh_projected,         # 新增欄位
+            "kwh_to_next_tier": kwh_to_next_tier      # 新增欄位
         }
+
     except: return default_kpis
