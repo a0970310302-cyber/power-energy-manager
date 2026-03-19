@@ -111,17 +111,22 @@ def show_analysis_page():
             else:
                 msg = f"**關聯性極低** (相關係數 {corr:.2f})"
                 adv = "您的耗電量幾乎不受氣溫影響，代表主要耗電來源可能來自照明、電腦設備或營業用機具。"
-                
-            st.info(f"💡 **氣候敏感度診斷**：您的用電量與外部氣溫 {msg}。{adv}")
+
+
+            # 🌟 修改說明文字
+            st.info(f"💡 **氣候敏感度診斷**：您的用電量與外部氣溫 {msg}。{adv} \n\n*(圖中點的亮色程度代表該時段的實際耗電強度)*")
             
-            # 繪製散佈圖
+            # 🌟 修改畫圖邏輯：color 改為 'power_kW'
             fig_scatter = px.scatter(
-                df_scatter, x='temperature', y='power_kW', color='Hour',
+                df_scatter, x='temperature', y='power_kW', color='power_kW', 
                 color_continuous_scale="Turbo", template="plotly_dark", opacity=0.7,
-                labels={'temperature': '外部氣溫 (°C)', 'power_kW': '實際功率 (kW)', 'Hour': '發生時間'}
+                labels={'temperature': '外部氣溫 (°C)', 'power_kW': '實際功率 (kW)'}
             )
             fig_scatter.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig_scatter, use_container_width=True)
+                
+            st.info(f"💡 **氣候敏感度診斷**：您的用電量與外部氣溫 {msg}。{adv}")
+
         else:
             st.info("ℹ️ 目前資料庫中尚未檢測到完整的氣溫 (temperature) 特徵，無法繪製環境關聯圖。")
     
@@ -255,6 +260,25 @@ def show_analysis_page():
         # 🌟 修改：改用 df_combined 與 true_current_time
         report = get_billing_report(df_combined, current_time=true_current_time)
         current_proj_cost = report['predicted_bill']
+
+        # 🌟 擷取級距資訊
+        tier = report.get('current_tier', 1)
+        total_kwh = report.get('total_kwh', 0)
+        to_next = report.get('kwh_to_next_tier', 0)
+
+        # 🌟 顯示目前的用電量與級距狀態
+        st.markdown(f"#### 📊 本期預估總用量：:blue[{total_kwh:.1f} 度] (落於第 {tier} 級距)")
+
+        # 動態預警提示
+        if tier < 6:
+            if to_next <= 50:
+                st.error(f"🚨 警告：距離第 {tier+1} 級距漲價僅剩 **{to_next:.1f} 度**！建議立即採取節能措施。")
+            else:
+                st.info(f"ℹ️ 距離進入下一級距尚有 {to_next:.1f} 度的安全額度。")
+        else:
+            st.error("🚨 已達最高級距 (第 6 級)，每度電費將以最高費率計算！")
+
+        st.divider()
         
         target = st.number_input("設定本期電費目標 (元)", value=1000, step=100)
         col_t1, col_t2 = st.columns(2)
