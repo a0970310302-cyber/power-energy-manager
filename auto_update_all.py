@@ -12,7 +12,7 @@ from datetime import datetime
 # ==========================================
 # 💡 透過 os.getenv 讀取環境變數。第二個參數是「本地預設 fallback 值」。
 # 確保你在自己電腦(Local)測試時依然能跑，但在 GitHub 上會優先吃 Secrets！
-JSON_SOURCE_URL = os.getenv("JSON_SOURCE_URL", "https://api.jsonstorage.net/v1/json/888edb43-7993-46ef-8020-767afb44a2cb/3a6282d1-b474-4274-952b-e4a0a84f0deb?apiKey=e1230ae2-6eee-433a-ad58-7ab2c622b9e5")
+JSON_SOURCE_URL = os.getenv("JSON_SOURCE_URL", "https://api.jsonstorage.net/v1/json/888edb43-7993-46ef-8020-767afb44a2cb/bbdace99-60c5-4604-91df-414a76cc3c6e?apiKey=e1230ae2-6eee-433a-ad58-7ab2c622b9e5")
 
 PANTRY_ID = os.getenv("PANTRY_ID", "6a2e85f5-4af4-4efd-bb9f-c5604fe8475e")
 PANTRY_BASKET = os.getenv("PANTRY_BASKET", "2026-q1")
