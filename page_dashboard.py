@@ -70,7 +70,9 @@ def show_dashboard_page():
     c1.metric("💸 目前累積電費 (已知)", f"NT$ {report['current_bill']:,}", delta="已定案")
     
     delta_val = report['predicted_bill'] - report['budget']
-    delta_msg = f"超支 {delta_val:,} 元" if delta_val > 0 else f"省下 {abs(delta_val):,} 元"
+    # === 🌟 修改後 (使用中性且專業的「預算餘額」) ===
+    # 加上負號 (-) 讓 Streamlit 在 inverse 模式下將餘額顯示為綠色好消息
+    delta_msg = f"超支 {delta_val:,} 元" if delta_val > 0 else f"- 預算餘額： {abs(delta_val):,} 元"
     
     c2.metric("🔮 AI 預估結算 (本期)", f"NT$ {report['predicted_bill']:,}", 
               delta=delta_msg, delta_color="inverse")
