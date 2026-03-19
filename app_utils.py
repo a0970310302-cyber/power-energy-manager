@@ -316,6 +316,7 @@ def get_billing_report(df, budget=1000, current_time=None):
         recommendation = "目前方案合適，無顯著價差"
 
 
+    # 🌟 修正：這裡是 get_billing_report 正確的回傳位置！
     return {
         "period": f"{cycle_start.strftime('%Y-%m-%d')} ~ {cycle_end.strftime('%Y-%m-%d')}",
         "current_bill": int(current_bill),
@@ -325,7 +326,10 @@ def get_billing_report(df, budget=1000, current_time=None):
         "status": status,
         "usage_percent": min(pred_bill/budget, 1.0) if budget > 0 else 0,
         "savings": int(savings),
-        "recommendation_msg": recommendation
+        "recommendation_msg": recommendation,
+        "current_tier": current_tier,             # 新增欄位
+        "total_kwh": total_kwh_projected,         # 新增欄位
+        "kwh_to_next_tier": kwh_to_next_tier      # 新增欄位
     }
 
 def get_core_kpis(df):
@@ -358,19 +362,15 @@ def get_core_kpis(df):
         if usage_prev_7d > 0.1: 
             weekly_delta = ((usage_last_7d - usage_prev_7d) / usage_prev_7d) * 100
 
+        # 🌟 修正：這裡是 get_core_kpis 該回傳的正確資料
         return {
-            "period": f"{cycle_start.strftime('%Y-%m-%d')} ~ {cycle_end.strftime('%Y-%m-%d')}",
-            "current_bill": int(current_bill),
-            "predicted_bill": int(pred_bill),
-            "potential_tou_bill": int(total_tou_projected),
-            "budget": budget,
-            "status": status,
-            "usage_percent": min(pred_bill/budget, 1.0) if budget > 0 else 0,
-            "savings": int(savings),
-            "recommendation_msg": recommendation,
-            "current_tier": current_tier,             # 新增欄位
-            "total_kwh": total_kwh_projected,         # 新增欄位
-            "kwh_to_next_tier": kwh_to_next_tier      # 新增欄位
+            "status_data_available": True,
+            "current_load": current_load,
+            "kwh_today_so_far": today_usage,
+            "kwh_this_month_so_far": kwh_this_month,
+            "weekly_delta_percent": weekly_delta,
+            "kwh_last_7_days": usage_last_7d,
+            "last_updated": latest_time.strftime("%Y-%m-%d %H:%M:%S")
         }
 
     except: return default_kpis
