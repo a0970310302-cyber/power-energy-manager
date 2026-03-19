@@ -64,34 +64,27 @@ def sync_cloud_to_pantry():
         
         formatted_new_data = {}
         processed_dates = set()
-        formatted_new_data = {}
-        processed_dates = set()
         
-        # --- 舊版解析邏輯 (巢狀 listAMIBase15MinData) ---
-        for date_key, date_content in data_block.items():
-            if not date_key.startswith("202"): 
+        # --- 新版解析邏輯 (扁平化時間戳記) ---
+        for datetime_key, item_data in data_block.items():
+            if not datetime_key.startswith("202"): 
                 continue
-            
-            processed_dates.add(date_key)
-            data_list = date_content.get("listAMIBase15MinData", [])
-            
-            # 反向掃描，尋找最後一筆「真正有效」的數據索引
-            last_valid_idx = -1
-            for i in range(len(data_list) - 1, -1, -1):
-                item = data_list[i]
-                if not (item.get("isMssingData") == 1 and item.get("power") == 0):
-                    last_valid_idx = i
-                    break
-            
-            # 截斷陣列
-            valid_data_list = data_list[:last_valid_idx + 1] if last_valid_idx != -1 else []
-            
-            for item in valid_data_list:
-                time_str = item.get("time")
-                power_val = item.get("power")
-                formatted_new_data[f"{date_key} {time_str}:00"] = power_val
                 
-        logging.info(f"🔍 舊版結構 JSON 解析完成，提取 {len(formatted_new_data)} 筆")
+            # 將 "2026-03-16-07-30" 拆解為日期與時間
+            parts = datetime_key.split('-')
+            if len(parts) == 5:
+                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}" # "2026-03-16"
+                time_str = f"{parts[3]}:{parts[4]}"            # "07:30"
+                
+                processed_dates.add(date_str)
+                
+                power_val = item_data.get("power", 0)
+                # 組合出程式後端統一使用的標準格式
+                standard_time_key = f"{date_str} {time_str}:00"
+                formatted_new_data[standard_time_key] = power_val
+                
+        logging.info(f"🔍 新版結構 JSON 解析完成，提取 {len(formatted_new_data)} 筆")
+
     
         if not formatted_new_data:
             logging.info("✨ 目前時段無有效電力數據（可能為資料源更新中），任務結束。")
