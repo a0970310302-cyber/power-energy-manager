@@ -157,7 +157,28 @@ def update_local_csv():
         p_data = p_res.json()
         logging.info(f"📡 已從 Pantry 載入 {len(p_data)} 筆數據進行聚合分析")
         
-        df_p = pd.DataFrame(list(p_data.items()), columns=['datetime', 'power'])
+        # === 🌟 核心修正：加強對 Pantry 資料格式的相容性 ===
+        normalized_data = {}
+        for k, v in p_data.items():
+            if k == '_metadata': continue # 略過 metadata
+            
+            # 處理 Key (時間): 若發現是 "2026-03-18-22-00" 的格式，轉回標準 "2026-03-18 22:00:00"
+            if len(k) == 16 and k.count('-') == 4:
+                parts = k.split('-')
+                dt_str = f"{parts[0]}-{parts[1]}-{parts[2]} {parts[3]}:{parts[4]}:00"
+            else:
+                dt_str = k
+                
+            # 處理 Value (功率): 若為字典則取出 power，否則直接取數值
+            if isinstance(v, dict):
+                power_val = v.get('power', np.nan)
+            else:
+                power_val = v
+                
+            normalized_data[dt_str] = power_val
+            
+        # 轉換為 DataFrame 進行後續運算
+        df_p = pd.DataFrame(list(normalized_data.items()), columns=['datetime', 'power'])
         df_p['datetime'] = pd.to_datetime(df_p['datetime'], errors='coerce')
         df_p = df_p.dropna(subset=['datetime']).set_index('datetime')
         df_p['power'] = pd.to_numeric(df_p['power'], errors='coerce')
@@ -171,21 +192,12 @@ def update_local_csv():
         # 增量過濾加入 3 天的安全覆寫視窗
         safe_dt = last_dt - pd.Timedelta(days=3)
         df_new_inc = df_new_api[df_new_api.index > safe_dt].copy()
-        if df_new_inc.empty:
-            logging.info("✨ 檢查完畢：近期無新數據或需校正的資料，無需更新。")
-            return
-        logging.info(f"📝 發現 {len(df_new_inc)} 小時的近期數據準備更新與寫入...")
-    except Exception as e:
-        logging.error(f"❌ [Step 2 數據處理失敗]: {str(e)}")
-        return
         
-        # 增量過濾加入 3 天的安全覆寫視窗
-        safe_dt = last_dt - pd.Timedelta(days=3)
-        df_new_inc = df_new_api[df_new_api.index > safe_dt].copy()
         if df_new_inc.empty:
             logging.info("✨ 檢查完畢：近期無新數據或需校正的資料，無需更新。")
             return
         logging.info(f"📝 發現 {len(df_new_inc)} 小時的近期數據準備更新與寫入...")
+        
     except Exception as e:
         logging.error(f"❌ [Step 2 數據處理失敗]: {str(e)}")
         return
