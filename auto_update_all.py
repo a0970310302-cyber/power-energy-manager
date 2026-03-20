@@ -95,12 +95,20 @@ def sync_cloud_to_pantry():
         p_data = p_res.json() if p_res.status_code == 200 else {}
         p_data.pop('_metadata', None)
         
+        # 取得這批新資料的最早時間點，作為保護歷史資料的下限
+        min_new_time = min(formatted_new_data.keys())
+
         # 💡 新增邏輯：主動清除 Pantry 中屬於處理日期，但不在有效名單內的殘留未來資料
         keys_to_delete = []
         for pk in p_data.keys():
             # 取出日期部分 (前 10 個字元，例如 "2026-03-15")
             pk_date = pk[:10] 
-            if pk_date in processed_dates and pk not in formatted_new_data:
+            
+            # 修正條件：
+            # 1. 日期有重疊 (pk_date in processed_dates)
+            # 2. 該筆資料的時間 >= 新資料的最早時間點 (pk >= min_new_time) <- 加入這行保護舊資料
+            # 3. 不在新資料名單內 (pk not in formatted_new_data)
+            if pk_date in processed_dates and pk >= min_new_time and pk not in formatted_new_data:
                 keys_to_delete.append(pk)
                 
         for pk in keys_to_delete:
