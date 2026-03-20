@@ -169,7 +169,7 @@ def show_analysis_page():
         with col_date2:
             end_date = st.date_input("結束日期", value=max_date, min_value=start_date, max_value=max_date)
             
-        if st.button("🚀 開始回測", use_container_width=True):
+        if st.button("🚀 開始回顧", use_container_width=True):
             analysis_df = df_history.loc[start_date.strftime('%Y-%m-%d'):end_date.strftime('%Y-%m-%d')]
             
             if analysis_df.empty:
